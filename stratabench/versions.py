@@ -114,6 +114,17 @@ def build(tag, jobs=None, extra=(), python=None):
     return prepare(tag, jobs, extra, python)
 
 
+def vision_executable(version, config, source_path):
+    from .platforms import executable
+    prepared=Path(version['exe']).parent/executable('strata-vision')
+    if prepared.is_file():return prepared
+    configured=(config.get('vision') or {}).get('exe')
+    if configured:
+        path=(Path(config.get('cwd') or Path(source_path).parent)/configured).resolve()
+        if path.is_file():return path
+    return None
+
+
 def effective_config(source_path, version, work, port, keep_vision=False):
     """Copy all model settings, make relative input paths absolute, relocate known writable outputs."""
     source_path, work = Path(source_path).resolve(), Path(work).resolve()
@@ -164,11 +175,11 @@ def effective_config(source_path, version, work, port, keep_vision=False):
         # Keep engine --vision: it is a tested engine allocation setting in the supplied config.
         changes.append('image encoder disabled for text suite; engine --vision flag preserved')
     elif cfg.get('vision'):
-        from .platforms import executable
-        vision_exe = Path(version['exe']).parent / executable('strata-vision')
-        if not vision_exe.exists():
+        vision_exe = vision_executable(version,original,source_path)
+        if vision_exe is None:
             raise ValueError('This version has no vision binary. Omit --keep-vision for text benchmarks.')
         cfg['vision']['exe'] = str(vision_exe)
+        changes.append('image encoder executable: '+str(vision_exe)+'; sha256: '+file_hash(vision_exe))
         for key in ('mmproj', 'model'):
             if cfg['vision'].get(key):
                 cfg['vision'][key] = str((old_cwd / cfg['vision'][key]).resolve())

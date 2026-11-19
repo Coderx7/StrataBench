@@ -121,7 +121,7 @@ if(!calls.includes('/api/state'))throw Error('Application startup never reached 
         with mock.patch.object(self.app,'start') as start:
             with self.request('/api/estimate',{'versions':['v-test'],'configs':['/config.json'],'all_suites':True}) as response:
                 data = json.load(response)
-            self.assertEqual(len(data['suites']),6)
+            self.assertEqual(len(data['suites']),len(gui.datasets.PROFILES))
             self.assertEqual(data['rows'][0]['config'],'/config.json')
             self.assertGreater(data['lower_seconds'],0)
             self.assertGreaterEqual(data['upper_seconds'],data['lower_seconds'])
@@ -163,6 +163,32 @@ if(!calls.includes('/api/state'))throw Error('Application startup never reached 
             self.app.refresh_public_library()
         self.assertTrue(self.app.public_ready)
         self.assertTrue(all(p['count']==1 for p in self.app.profiles))
+
+    def test_judge_key_is_kept_out_of_commands_and_public_state(self):
+        data={'profile':'writing','versions':['v-test'],'configs':['/config.json'],
+            'style_judge_enabled':True,'style_judge_endpoint':'http://judge.example/v1',
+            'style_judge_model':'fixed-judge','style_judge_key':'test-secret-value'}
+        with mock.patch.object(self.app,'start',return_value={'ok':True}) as start:
+            self.request('/api/run',data).close()
+        self.assertNotIn('test-secret-value',str(start.call_args.args))
+        self.assertEqual(start.call_args.kwargs['env_overrides']['STRATABENCH_JUDGE_API_KEY'],'test-secret-value')
+        self.assertNotIn('test-secret-value',json.dumps(self.app.state()))
+
+    def test_judge_configuration_and_agent_turn_limits_are_validated_before_start(self):
+        base={'versions':['v-test'],'configs':['/config.json']}
+        for extra in ({'profile':'tools','agent_turns':0},{'profile':'coding','coding_image':'--privileged'},
+                {'profile':'writing','style_judge_enabled':True,'style_judge_endpoint':'file:///tmp/key','style_judge_model':'judge'},
+                {'profile':'writing','style_judge_enabled':True,'style_judge_endpoint':'https://user:key@example.com/v1','style_judge_model':'judge'}):
+            with self.subTest(extra=extra),self.assertRaises(ValueError):gui.run_command({**base,**extra})
+
+    def test_writing_estimate_works_before_optional_judge_fields_are_filled(self):
+        data={'profile':'writing','versions':['v-test'],'configs':['/config.json'],
+            'style_judge_enabled':True,'style_judge_endpoint':'','style_judge_model':''}
+        with self.request('/api/estimate',data) as response:
+            estimate=json.load(response)
+        self.assertEqual(estimate['profile'],'writing')
+        self.assertEqual(estimate['combinations'],1)
+        self.assertGreater(estimate['upper_seconds'],estimate['lower_seconds'])
 
     def test_unknown_version_and_config_rejected(self):
         with mock.patch.object(self.app, 'start') as start:

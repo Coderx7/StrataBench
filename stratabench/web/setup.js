@@ -1,5 +1,5 @@
 /* Source preferences are separate from model configuration and saved run provenance. */
-let sourceDraft=null, sourceRelease=null, sourceBusy=false;
+let sourceDraft=null, sourceRelease=null, sourceBusy=false, welcomeShownThisPage=false;
 const sourceMethods={
   local:{name:'Existing build',icon:'layers',detail:'Copy an engine and its matching server from an existing Strata folder.'},
   release:{name:'Portable release',icon:'external',detail:'Download a compatible engine package and matching server. No compiler needed.'},
@@ -10,7 +10,7 @@ function renderSystem(){return renderHardwareSetup();}
 function renderSourceSettings(){
   if(!sourceDraft)sourceDraft={...state.strata_source,cmake_args:[...(state.strata_source?.cmake_args||[])]};
   const c=sourceDraft,method=c.method||'release',build=['repository','folder'].includes(method);
-  return `<section class="card source-settings"><div class="source-settings-head"><div><div class="eyebrow">STRATA CONNECTION</div><h2>Your engine. Your source.</h2><p>Choose how versions are prepared. Model weights are configured separately.</p></div><span class="badge neutral">${esc(state.platform||'Local machine')}</span></div>
+  return setupChecklist()+`<section class="card source-settings"><div class="source-settings-head"><div><div class="eyebrow">STRATA CONNECTION</div><h2>Your engine. Your source.</h2><p>Choose how versions are prepared. Model weights are configured separately.</p></div><span class="badge neutral">${esc(state.platform||'Local machine')}</span></div>
   <div class="source-methods">${Object.entries(sourceMethods).map(([key,m])=>`<button class="source-method ${method===key?'selected':''}" data-source-method="${key}" aria-pressed="${method===key}"><span class="card-icon">${icon(m.icon)}</span><strong>${m.name}</strong><span>${m.detail}</span>${method===key?'<span class="source-selected">'+icon('check')+' Selected</span>':''}</button>`).join('')}</div>
   <form id="source-settings-form"><div class="source-fields">
   ${['release','repository'].includes(method)?`<label>Strata Git repository<input data-source-field="repository" type="url" value="${esc(c.repository||'')}" placeholder="https://github.com/Niko1221/Strata.git" required><small>${method==='release'?'GitHub release API; only portable ZIP or tar archives are used. Installers are not run.':'An HTTPS Git repository. Sources are cloned into the app’s own cache.'}</small></label>`:''}
@@ -26,9 +26,14 @@ function renderSourceSettings(){
 }
 function sourceReleasePreview(){return sourceRelease?`<div class="release-preview"><strong>${esc(sourceRelease.tag)} · ${sourceRelease.assets.length} compatible portable ${sourceRelease.assets.length===1?'asset':'assets'}</strong>${sourceRelease.assets.length?sourceRelease.assets.map(a=>`<div><span>${esc(a.name)}</span><small>${(a.bytes/1024/1024).toFixed(1)} MB · ${a.digest?'SHA-256 published':'Check release checksum file'}</small></div>`).join(''):'<p>No portable engine matches this OS, architecture, and backend. Choose another backend/tag, use an existing build, or build from source.</p>'}</div>`:'';}
 function sourceFeedback(message,error=false){const el=$('#source-feedback');if(el){el.textContent=message;el.classList.toggle('error',error);}}
-async function saveSource(){await api('/api/strata-source',sourceDraft);await refresh();sourceFeedback('Settings saved. Prepared versions and saved runs keep their original settings.');}
-document.addEventListener('input',event=>{const el=event.target,key=el.dataset.sourceField;if(!key)return;sourceDraft[key]=key==='cmake_args'?el.value.split('\n').map(s=>s.trim()).filter(Boolean):el.type==='checkbox'?el.checked:el.value;if(['repository','backend'].includes(key))sourceRelease=null;});
-document.addEventListener('change',event=>{const el=event.target,key=el.dataset.sourceField;if(key)sourceDraft[key]=el.type==='checkbox'?el.checked:el.value;});
+async function saveSource(){await api('/api/strata-source',sourceDraft);await refresh(true);sourceFeedback('Settings saved. Prepared versions and saved runs keep their original settings.');}
+function updateSourceField(el){
+  const key=el.dataset.sourceField;if(!key||!sourceDraft)return;
+  sourceDraft[key]=key==='cmake_args'?el.value.split('\n').map(s=>s.trim()).filter(Boolean):el.type==='checkbox'?el.checked:el.value;
+  if(['repository','backend'].includes(key)){sourceRelease=null;sourceDraft.asset='auto';const picker=$('[data-source-field="asset"]');if(picker)picker.value='auto';const preview=$('#source-release-preview');if(preview)preview.innerHTML='';}
+}
+document.addEventListener('input',event=>updateSourceField(event.target));
+document.addEventListener('change',event=>updateSourceField(event.target));
 document.addEventListener('submit',async event=>{if(event.target.id!=='source-settings-form')return;event.preventDefault();try{await saveSource();toast('Strata source settings saved.');}catch(error){sourceFeedback(error.message,true);}});
 document.addEventListener('click',async event=>{
   const button=event.target.closest('button');if(!button||button.disabled)return;
@@ -51,3 +56,24 @@ document.addEventListener('click',async event=>{
     }
   }catch(error){sourceFeedback(error.message,true);toast(error.message,true);}finally{button.disabled=false;}
 });
+
+function setupChecklist(){
+  const setup=state.setup;if(!setup||setup.source_configured&&setup.has_versions&&setup.has_configs)return '';
+  const steps=[['source_configured','Connect Strata','Choose a source below and save its settings.'],['has_versions','Prepare a version','Use Save & prepare version to import, download, or build an engine.'],['has_configs','Add model configs','Select a config folder below, or import a JSON file in New benchmark.']];
+  return `<section class="setup-checklist" aria-label="Setup progress"><div><div class="eyebrow">GET READY TO BENCHMARK</div><h2>Three steps to your first run.</h2></div><ol>${steps.map(([key,title,description],index)=>`<li class="${setup[key]?'done':''}"><span class="setup-step-number">${setup[key]?icon('check'):index+1}</span><div><strong>${title}${setup[key]?'<span class="sr-only"> — complete</span>':''}</strong><p>${description}</p></div></li>`).join('')}</ol><button class="text-button" data-nav="new">${icon('sliders')} Open model configurations</button></section>`;
+}
+function maybeShowSetupWelcome(){
+  if(welcomeShownThisPage||!state.setup?.show_welcome||$('#modal').open)return;
+  welcomeShownThisPage=true;
+  showModal('Welcome to StrataBench',`<div class="welcome-intro"><span class="welcome-mark">${icon('layers')}</span><p>Let’s connect Strata before your first benchmark. Your setup page will guide you through these three steps.</p></div><ol class="welcome-steps"><li><span>1</span><div><strong>Choose where Strata comes from</strong><p>Use an existing build, a portable release, a repository, or a local source folder.</p></div></li><li><span>2</span><div><strong>Prepare your first version</strong><p>Import, download, or build the engine using the settings you choose.</p></div></li><li><span>3</span><div><strong>Connect your model configuration</strong><p>Choose your model config folder or import a JSON config, then try the Smoke test.</p></div></li></ol><div class="welcome-error inline-error" role="alert"></div><div class="modal-bottom"><button class="secondary-button" data-welcome-action="later">Explore first</button><button class="primary-button" data-welcome-action="configure">${icon('sliders')} Configure Strata</button></div>`);
+  $('#modal').classList.add('setup-welcome-dialog');$('#modal').dataset.welcome='true';
+}
+async function dismissSetupWelcome(configure){
+  const modal=$('#modal');const error=$('.welcome-error',modal);
+  try{
+    await api('/api/setup-welcome',{});if(state.setup)state.setup.show_welcome=false;
+    delete modal.dataset.welcome;modal.classList.remove('setup-welcome-dialog');modal.close();navigate(configure?'system':'new');
+  }catch(problem){if(error)error.textContent=problem.message;else toast(problem.message,true);}
+}
+document.addEventListener('click',event=>{const button=event.target.closest('[data-welcome-action]');if(button&&!button.disabled)dismissSetupWelcome(button.dataset.welcomeAction==='configure');});
+document.addEventListener('close',event=>{const modal=event.target;if(modal.id!=='modal'||modal.dataset.welcome!=='true')return;delete modal.dataset.welcome;modal.classList.remove('setup-welcome-dialog');api('/api/setup-welcome',{}).then(()=>{if(state.setup)state.setup.show_welcome=false;}).catch(error=>toast(error.message,true));},true);

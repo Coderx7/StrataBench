@@ -1,6 +1,6 @@
 # Dataset provenance
 
-Raw source data and available license texts are cached in `datasets/raw/`. Exact download URLs, revision information, SHA-256 checksums and retrieval times are in `datasets/sources.lock.json`. The benchmark does not upload model prompts, answers or local configs to an external judge.
+Raw source data and available license texts are cached in `datasets/raw/`. Exact download URLs, revision information, SHA-256 checksums and retrieval times are in `datasets/sources.lock.json`. Scoring runs locally by default. If the optional writing judge is enabled, writing briefs and responses are sent to the configured judge endpoint; model configuration files are not sent.
 
 | Material | Source | Terms / attribution |
 | --- | --- | --- |

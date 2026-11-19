@@ -13,7 +13,7 @@ import urllib.error
 from .common import ROOT, digest, file_hash, hardware, read_json, request_json, stamp, write_json
 from .platforms import process_options, stop_tree
 from .grading import grade
-from .versions import effective_config, fingerprint
+from .versions import effective_config, fingerprint, vision_executable
 
 SYSTEM = ('Solve the task accurately. You may reason before answering. End with a JSON object '
           'with exactly one key, "answer", containing your final answer. For a multiple-choice '
@@ -25,10 +25,12 @@ BUDGETS = {'easy': 2048, 'medium': 4096, 'hard': 8192, 'very_hard': 12288, 'extr
 
 def payload(case, options, repeat=0):
     body = {'model': options.get('model', 'strata'), 'stream': False,
-            'messages': [{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': case['prompt']}],
+            'messages': [{'role': 'system', 'content': case.get('system',SYSTEM)}, {'role': 'user', 'content': case['prompt']}],
             'temperature': options['temperature'], 'top_p': 1.0,
             'seed': options['seed'] + repeat,
             'max_tokens': options.get('max_tokens') or BUDGETS[case['difficulty']]}
+    if case.get('image'):
+        body['messages'][1]['content']=[{'type':'text','text':case['prompt']},{'type':'image_url','image_url':{'url':case['image']}}]
     effort = options.get('reasoning', 'xhigh')
     if effort != 'default':
         body['reasoning_effort'] = 'none' if effort == 'off' else effort
@@ -178,6 +180,14 @@ def make_targets(versions, configs):
                         if st.st_size < 16*1024*1024:
                             entry['sha256'] = file_hash(p)
                         inputs.append(entry)
+            vision=cfg.get('vision') or {}
+            for key in ('mmproj','model'):
+                if vision.get(key):
+                    vp=(Path(cfg.get('cwd') or path.parent)/vision[key]).resolve()
+                    if vp.is_file():
+                        stat=vp.stat();inputs.append({'flag':'vision.'+key,'path':str(vp),'bytes':stat.st_size,'mtime_ns':stat.st_mtime_ns})
+            vision_exe=vision_executable(version,cfg,path)
+            if vision and vision_exe is not None:tok_hashes['vision_engine']=file_hash(vision_exe)
             identity = {'version': version, 'config': str(path), 'config_sha256': file_hash(path),
                         'tokenizer_hashes': tok_hashes, 'input_metadata': inputs}
             id_ = digest(identity)[:14]
@@ -253,8 +263,15 @@ def run(cases, targets, options, resume=None):
                                    'group': c['group'], 'expected': c['answer'], 'request': body, 'at': stamp()}
                             fatal = False
                             try:
-                                row.update(completion(endpoint, body, options['timeout'], api_key))
-                                row.update(grade(c, row['content'], row['finish_reason']))
+                                if c.get('protocol') in ('tools','coding'):
+                                    from .capability_runner import run_agent
+                                    row.update(run_agent(c,body,endpoint,options,api_key))
+                                else:
+                                    row.update(completion(endpoint, body, options['timeout'], api_key))
+                                    row.update(grade(c, row['content'], row['finish_reason']))
+                                if c.get('protocol')=='writing' and options.get('style_judge_endpoint') and not row.get('truncated'):
+                                    from .capability_runner import judge_writing
+                                    row['style_judge']=judge_writing(c,row['content'],options,os.environ.get('STRATABENCH_JUDGE_API_KEY'))
                                 errors = 0
                             except (OSError, ValueError, http.client.HTTPException) as e:
                                 detail = str(e)

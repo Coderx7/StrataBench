@@ -74,6 +74,9 @@ def exact(value):
 
 
 def grade(case, content, finish_reason=None):
+    if case['grader']=='writing':
+        from .capability_cases import writing_grade
+        return writing_grade(content,finish_reason,case['rules'])
     answer, formatted = extract_answer(content)
     kind, target = case['grader'], case['answer']
     correct = False

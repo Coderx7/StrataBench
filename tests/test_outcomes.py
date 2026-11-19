@@ -43,7 +43,7 @@ class OutcomeTests(unittest.TestCase):
 
     def test_disjoint_counts_include_missing_targets_and_additional_unparsed_filter(self):
         data = self.app.outcomes(self.folder)
-        self.assertEqual(data['counts'],dict(passed=1,incorrect=1,cutoffs=1,errors=1,pending=6,unparsed=1))
+        self.assertEqual(data['counts'],dict(passed=1,incorrect=1,cutoffs=1,errors=1,pending=6,unparsed=1,judge_errors=0))
         self.assertEqual(data['total'],10)
         self.assertEqual(data['remaining'],7)
         self.assertTrue(data['resumable'])
@@ -133,6 +133,14 @@ class OutcomeTests(unittest.TestCase):
         before=self.path.read_bytes()
         with self.assertRaisesRegex(ValueError,'damaged'):self.app.outcomes(self.folder)
         self.assertEqual(self.path.read_bytes(),before)
+
+    def test_judge_errors_are_inspectable_without_reclassifying_correct_answers(self):
+        self.rows[0]['style_judge']={'status':'error','error':'Judge unavailable'}
+        self.path.write_text(''.join(json.dumps(row)+'\n' for row in self.rows),encoding='utf-8')
+        data=self.app.outcomes(self.folder,{'category':'judge_errors'})
+        self.assertEqual(data['counts']['judge_errors'],1)
+        self.assertEqual(data['counts']['passed'],1)
+        self.assertEqual(data['tests'][0]['status'],'passed')
 
 
 if __name__=='__main__': unittest.main()

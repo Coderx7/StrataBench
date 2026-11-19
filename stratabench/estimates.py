@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 import statistics
 
-from .common import ROOT, file_hash, read_json
+from .common import ROOT, digest, file_hash, read_json
 from .runner import BUDGETS
 
 # Deliberately broad output-token assumptions: these are not model-quality measurements.
@@ -39,6 +39,15 @@ def rates(config):
     return (5.,35.)
 
 
+def timing_scope(options):
+    profile=options.get('profile')
+    if profile not in ('writing','vision','tools','coding'):return ''
+    judge=bool(options.get('style_judge_enabled',bool(options.get('style_judge_endpoint'))))
+    return digest({'profile':profile,'turns':int(options.get('agent_turns',8)) if profile in ('tools','coding') else None,
+        'coding_image':options.get('coding_image','python:3.12-slim') if profile=='coding' else None,
+        'judge':(options.get('style_judge_endpoint'),options.get('style_judge_model')) if judge and profile=='writing' else None})
+
+
 class TimingHistory:
     def __init__(self, root=ROOT):
         self.root = Path(root)
@@ -66,7 +75,7 @@ class TimingHistory:
                     if target.get('endpoint'):
                         continue
                     config = target['config']
-                    key = (config, target.get('config_sha256'), target['version']['name'], effort(options.get('reasoning')))
+                    key = (config, target.get('config_sha256'), target['version']['name'], effort(options.get('reasoning')),timing_scope(options))
                     session = path.parent/target['id']/'session.json'
                     if session.exists():
                         seconds = read_json(session).get('startup_seconds')
@@ -112,10 +121,15 @@ class TimingHistory:
             n = counts.get(level,0)
             if not n:
                 continue
-            budget = max_tokens or BUDGETS[level]
+            agent=options.get('profile') in ('tools','coding')
+            turns=int(options.get('agent_turns',8)) if agent else 1
+            budget = max_tokens or (min(BUDGETS[level],4096) if agent else BUDGETS[level])
             token_low,token_high = TOKEN_RANGES.get(reasoning,TOKEN_RANGES['xhigh'])[index]
             lo = min(token_low,budget)/fast + 1
             hi = min(token_high,budget)/slow + 6
+            if agent:lo*=min(3,turns);hi*=turns
+            judged=options.get('profile')=='writing' and options.get('style_judge_enabled',bool(options.get('style_judge_endpoint')))
+            if judged:lo+=3;hi+=300
             if context_words:
                 # These records tokenize differently from math: include a broad long-prompt read-time range.
                 relevant = [w for w in context_words if ('medium' if w<=8000 else 'very_hard')==level]
@@ -123,7 +137,7 @@ class TimingHistory:
                     lo += statistics.mean(relevant)*1.3/1000
                     hi += statistics.mean(relevant)*2.2/80
             else:
-                matches = self.samples.get(((path,sha,version,reasoning),level),{})
+                matches = self.samples.get(((path,sha,version,reasoning,timing_scope(options)),level),{})
                 valid = [s['seconds'] for s in matches.values() if s.get('budget')==budget]
                 if valid:
                     median = statistics.median(valid)
@@ -131,8 +145,8 @@ class TimingHistory:
                     measured_levels.append(level)
                     # Small/easy-only samples cannot predict hard reasoning; only adjust that same level.
                     lo,hi = (min(valid)*.6,max(median*2,max(valid)*1.25)) if len(valid)<5 else (min(valid)*.75,max(valid)*1.5)
-            lower += min(lo,timeout)*n*repeat
-            upper += min(max(lo,hi),timeout)*n*repeat
+            lower += min(lo,timeout*turns+(300 if judged else 0))*n*repeat
+            upper += min(max(lo,hi),timeout*turns+(300 if judged else 0))*n*repeat
         startups = self.startups.get((path,sha,version),[])
         boot_low,boot_high = (max(20,min(startups)*.7),max(startups)*1.8) if startups else (45,300)
         startup_cap = float(options.get('startup_timeout') or 900)

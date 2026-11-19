@@ -37,6 +37,13 @@ def benchmark_locked():
     return is_locked(ROOT / '.run.lock')
 
 
+def setup_status(state, configs):
+    has_versions = bool(state.get('versions'))
+    return {'show_welcome': not state.get('setup_welcome_seen', False) and not has_versions,
+            'source_configured': bool(state.get('strata_source')) or has_versions,
+            'has_versions': has_versions, 'has_configs': bool(configs)}
+
+
 class AnswerIndex:
     """Incremental, read-only index. Never truncate a runner's partial final line."""
     def __init__(self):
@@ -69,7 +76,7 @@ class AnswerIndex:
                         'attempts': previous.get('attempts', 0)+1,
                         'elapsed_seconds': row.get('elapsed_seconds', 0),
                         'unparsed': bool(row.get('unparsed')) and status != 'errors',
-                        'json_format': bool(row.get('json_format'))}
+                        'json_format': bool(row.get('json_format')),'judge_error':row.get('style_judge',{}).get('status')=='error'}
                 except (ValueError, KeyError, TypeError):
                     raise ValueError('A saved answer is damaged. The original file has been preserved.') from None
                 index['pos'] = stream.tell()
@@ -114,6 +121,7 @@ def config_catalog():
         item.update(context=flag('--max-context'), kv=flag('--kv'), spec=flag('--spec'),
                     imported=Path(item['path']).parent == imported)
         item['id'] = item['path']
+        item['vision'] = bool(read_json(item['path']).get('vision'))
         out.append(item)
     return out
 
@@ -162,6 +170,18 @@ def run_command(data):
         if not re.fullmatch(r'[a-f0-9]{32}\.jsonl', str(name)) or not (ROOT / 'user-tasks' / name).is_file():
             raise ValueError('Choose a custom question file first.')
         cmd += ['--tasks', str(ROOT / 'user-tasks' / name)]
+    if profile in ('tools','coding'):
+        cmd += ['--agent-turns',str(number(data,'agent_turns',8,1,32))]
+    if profile=='coding':
+        image=str(data.get('coding_image','python:3.12-slim'))
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./:@-]{0,250}',image):raise ValueError('Invalid coding runtime image.')
+        cmd += ['--coding-image',image]
+    if profile=='writing' and data.get('style_judge_enabled'):
+        endpoint=str(data.get('style_judge_endpoint','')).strip();model=str(data.get('style_judge_model','')).strip()
+        parsed=urlsplit(endpoint)
+        if parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or not model or len(model)>200:
+            raise ValueError('The writing judge needs an HTTP(S) endpoint without embedded credentials and a model name.')
+        cmd += ['--style-judge-endpoint',endpoint,'--style-judge-model',model]
     return cmd
 
 
@@ -170,6 +190,7 @@ class App:
         self.token = secrets.token_urlsafe(32)
         self.lock = threading.RLock()
         self.job = None
+        self.judge_keys = {}
         self.proc = None
         self.server = None
         self.closed = False
@@ -185,7 +206,11 @@ class App:
                  'standard': ('Standard', 'A stronger comparison of your shortlist.'),
                  'deep': ('Deep evaluation', 'More coverage, including all AIME problems.'),
                  'full': ('Full suite', 'Every included question. A substantial run.'),
-                 'context': ('Long context', 'Find answers buried in long documents.')}
+                 'context': ('Long context', 'Find answers buried in long documents.'),
+                 'writing':('Writing style','Writing constraints, with optional independent quality judging.'),
+                 'vision':('Vision','Generated visual counting, spatial and chart questions.'),
+                 'tools':('Tool use','Bounded, multi-step function-calling workflows.'),
+                 'coding':('Agentic coding','Read, edit and test small Python projects in Docker.')}
         for key, (name, description) in names.items():
             try:
                 cases = datasets.select(key)
@@ -221,7 +246,7 @@ class App:
             if self.saved_cases.get(folder, (None,))[0] != stamp:
                 self.saved_cases[folder] = (stamp, read_json(case_path))
             cases = self.saved_cases[folder][1]
-            counts = dict.fromkeys(('passed', 'incorrect', 'cutoffs', 'errors', 'pending', 'unparsed'), 0)
+            counts = dict.fromkeys(('passed', 'incorrect', 'cutoffs', 'errors', 'pending', 'unparsed', 'judge_errors'), 0)
             entries, targets = [], []
             for ti, target in enumerate(manifest['targets']):
                 target_dir = (folder / target['id']).resolve()
@@ -235,6 +260,7 @@ class App:
                         row = rows.get((case['id'], repeat), {})
                         status = row.get('status', 'pending')
                         counts[status] += 1
+                        if row.get('judge_error'):counts['judge_errors']+=1
                         if row.get('unparsed'):
                             counts['unparsed'] += 1
                         if not summary_only:
@@ -243,7 +269,7 @@ class App:
                                 'group': case.get('group', 'custom'), 'difficulty': case.get('difficulty', 'easy'),
                                 'preview': case.get('prompt', '')[:180], 'status': status,
                                 'attempts': row.get('attempts', 0), 'elapsed_seconds': row.get('elapsed_seconds'),
-                                'unparsed': row.get('unparsed', False), '_case': case, '_row': row, '_path': path})
+                                'unparsed': row.get('unparsed', False),'judge_error':row.get('judge_error',False), '_case': case, '_row': row, '_path': path})
             total = sum(counts[k] for k in ('passed', 'incorrect', 'cutoffs', 'errors', 'pending'))
             owned = bool(self.job and self.job.get('result_id') == folder.name and self.job['state'] in ('running', 'stopping'))
             locked = benchmark_locked()
@@ -271,7 +297,7 @@ class App:
             if category not in ('all', *counts):
                 raise ValueError('Choose a valid test category.')
             query = str(data.get('search', '')).strip().casefold()[:300]
-            filtered = [e for e in entries if (category == 'all' or e['status'] == category or category == 'unparsed' and e['unparsed'])
+            filtered = [e for e in entries if (category == 'all' or e['status'] == category or category == 'unparsed' and e['unparsed'] or category == 'judge_errors' and e['judge_error'])
                 and (not data.get('target') or e['target'] == str(data['target']))
                 and (not data.get('difficulty') or e['difficulty'] == data['difficulty'])
                 and (not data.get('group') or e['group'] == data['group'])
@@ -293,12 +319,14 @@ class App:
                 ranking = s.get('ranking', [])
                 complete = [r for r in ranking if r.get('complete')]
                 live = self.outcomes(path.parent, summary_only=True)
+                judge=(m['options'].get('style_judge_endpoint'),m['options'].get('style_judge_model'))
+                judge_key_needed=bool(m['options'].get('style_judge_key_required') and not (self.judge_keys.get(judge) or os.environ.get('STRATABENCH_JUDGE_API_KEY')))
                 items.append({'id': path.parent.name, 'created': m['created'], 'status': m['status'],
                     'profile': m['options']['profile'], 'reasoning': m['options']['reasoning'],
                     'repeats': m['options']['repeats'], 'questions': m['case_count'],
                     'combinations': len(m['targets']), 'targets': [t['label'] for t in m['targets']],
                     'best': complete[0] if complete else None,
-                    'ranking': ranking, 'has_report': (path.parent / 'report.html').exists(),
+                    'ranking': ranking, 'judge_key_needed':judge_key_needed,'judge_endpoint':judge[0],'judge_model':judge[1], 'has_report': (path.parent / 'report.html').exists(),
                     'comparison_key': s.get('comparison_key'),
                     'errors': live['counts']['errors'], 'cutoffs': live['counts']['cutoffs'], **live})
             except (ValueError, KeyError, OSError):
@@ -328,21 +356,24 @@ class App:
                 job.update(completed=saved['completed'], total=saved['total'], counts=saved['counts'],
                            passed=saved['counts']['passed'], failed=saved['counts']['incorrect']+saved['counts']['cutoffs'],
                            errors=saved['counts']['errors'], resumable=saved['resumable'])
+        configs = config_catalog()
         return {'versions': [{'name': name, 'kind': s['versions'][name]['kind'], 'created': s['versions'][name].get('created'),
                               'commit': s['versions'][name].get('git', '')[:12]} for name in ordered_names(s)],
-                'configs': config_catalog(), 'profiles': self.profiles, 'profile_counts': self.profile_counts,
+                'configs': configs, 'profiles': self.profiles, 'profile_counts': self.profile_counts,
                 'hardware': self.hardware, 'runs': runs, 'job': job,
                 'references': refs, 'version_sort_mode': s.get('version_sort_mode','newest'),
                 'strata_root': s['strata_root'], 'default_reasoning': 'xhigh',
                 'strata_source': acquisition.preferences(s),
+                'setup': setup_status(s, configs),
                 'platform': 'Windows' if windows() else 'Linux',
                 'datasets_ready': self.public_ready}
 
-    def start(self, kind, command, title, **extra):
+    def start(self, kind, command, title, env_overrides=None, **extra):
         with self.lock:
             if self.job and self.job['state'] in ('running', 'stopping'):
                 raise ValueError('An operation is already running. Stop it or wait for it to finish.')
             env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+            env.update(env_overrides or {})
             proc = subprocess.Popen([find_python(), str(ROOT / 'bench'), *command], cwd=ROOT,
                 env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding='utf-8', errors='replace', bufsize=1, **process_options())
@@ -415,6 +446,16 @@ class App:
             return {'ok': True}
 
     def action(self, route, data):
+        if route == '/api/setup-welcome':
+            with local_lock('.prepare.lock'):
+                state = settings()
+                state['setup_welcome_seen'] = True
+                save_settings(state)
+            return {'ok': True}
+        if route == '/api/prepare-coding':
+            image=str(data.get('image','python:3.12-slim'))
+            if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./:@-]{0,250}',image):raise ValueError('Invalid coding runtime image.')
+            return self.start('coding-runtime',['prepare-coding','--image',image],'Preparing isolated coding runtime')
         if route == '/api/strata-source':
             with local_lock('.prepare.lock'):
                 cfg = acquisition.configure(data)
@@ -453,7 +494,17 @@ class App:
         if route == '/api/estimate':
             return self.estimate(data)
         if route == '/api/run':
-            return self.start('run', run_command(data), 'Benchmark in progress')
+            command=run_command(data)
+            overrides={}
+            if data.get('profile')=='writing' and data.get('style_judge_enabled') and data.get('style_judge_key'):
+                key=data['style_judge_key']
+                if not isinstance(key,str) or len(key)>8192:raise ValueError('Invalid judge API key.')
+                self.judge_keys[(str(data['style_judge_endpoint']).strip().rstrip('/'),str(data['style_judge_model']).strip())]=key
+                overrides['STRATABENCH_JUDGE_API_KEY']=key
+            elif data.get('profile')=='writing' and data.get('style_judge_enabled'):
+                key=self.judge_keys.get((str(data.get('style_judge_endpoint','')).strip().rstrip('/'),str(data.get('style_judge_model','')).strip()))
+                if key:overrides['STRATABENCH_JUDGE_API_KEY']=key
+            return self.start('run', command, 'Benchmark in progress',env_overrides=overrides)
         if route == '/api/stop':
             return self.stop()
         if route == '/api/add-version':
@@ -473,8 +524,17 @@ class App:
             return self.start('snapshot', cmd, 'Importing '+name)
         if route in ('/api/resume', '/api/report'):
             folder = result_path(data.get('id'))
-            progress = {}
+            progress = {};overrides={}
             if route.endswith('resume'):
+                options=read_json(folder/'manifest.json')['options']
+                identity=(options.get('style_judge_endpoint'),options.get('style_judge_model'))
+                if identity[0]:
+                    key=data.get('style_judge_key') or self.judge_keys.get(identity) or os.environ.get('STRATABENCH_JUDGE_API_KEY')
+                    if key:
+                        if not isinstance(key,str) or len(key)>8192:raise ValueError('Invalid judge API key.')
+                        self.judge_keys[identity]=key;overrides['STRATABENCH_JUDGE_API_KEY']=key
+                    elif options.get('style_judge_key_required'):
+                        raise ValueError('Re-enter the API key for this run’s original writing judge before resuming.')
                 saved = self.outcomes(folder, summary_only=True)
                 if saved['active'] or saved['resume_blocked']:
                     raise ValueError('A benchmark is already running. Stop it or wait for it to finish before resuming.')
@@ -485,7 +545,7 @@ class App:
                     'errors': saved['counts']['errors'], 'total': saved['total']}
             return self.start('resume' if route.endswith('resume') else 'report',
                               ['resume' if route.endswith('resume') else 'report', str(folder)],
-                              'Resuming benchmark' if route.endswith('resume') else 'Updating report', result_id=folder.name, **progress)
+                              'Resuming benchmark' if route.endswith('resume') else 'Updating report', result_id=folder.name, env_overrides=overrides, **progress)
         if route == '/api/compare':
             ids = data.get('ids', [])
             if not isinstance(ids, list) or len(set(ids)) < 2:
@@ -517,7 +577,7 @@ class App:
 
     def estimate(self, data):
         # Reuse run validation, but this endpoint never starts an engine or downloads data.
-        run_command(data)
+        run_command({**data,'style_judge_enabled':False})
         if data.get('all_suites'):
             result = self.estimate({**data,'all_suites':False})
             result['suites'] = {}

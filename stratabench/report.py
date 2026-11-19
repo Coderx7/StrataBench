@@ -59,7 +59,14 @@ def summarize(folder):
         complete = len(rows) == total and state.get('state') == 'complete'
         groups = {k: {'correct': v[0], 'total': v[1], 'accuracy': v[0]/v[1]} for k, v in groups.items()}
         levels = {k: {'correct': v[0], 'total': v[1], 'accuracy': v[0]/v[1]} for k, v in levels.items()}
-        summaries.append({'id': target['id'], 'label': target['label'], 'folder': str(folder),
+        writing=[r for r in rows.values() if 'constraint_score' in r]
+        judged=[r['style_judge'] for r in rows.values() if r.get('style_judge',{}).get('status')=='complete']
+        capability={'constraint_score':statistics.mean(r['constraint_score'] for r in writing) if writing else None,
+            'style_judge_score':statistics.mean(j['average'] for j in judged) if judged else None,
+            'style_judge_count':len(judged),'style_judge_errors':sum(r.get('style_judge',{}).get('status')=='error' for r in rows.values()),
+            'tool_calls':sum(r.get('tool_calls',0) for r in rows.values()),
+            'tool_errors':sum(r.get('tool_errors',0) for r in rows.values())}
+        summaries.append({**capability,'id': target['id'], 'label': target['label'], 'folder': str(folder),
             'complete': complete, 'state': state.get('state', 'pending'), 'failure': state.get('error'),
             'planned': total, 'answered': len(rows), 'correct': correct, 'accuracy': correct/total,
             'macro_accuracy': statistics.mean(v['accuracy'] for v in groups.values()),
@@ -112,14 +119,14 @@ def generate(folder, sources=None):
     comparisons = [paired(completed[0], other, cases) for other in completed[1:]] if completed else []
     refs = reference_catalog()
     refs['rows'] = reference_rows(c['group'] for c in cases)
-    summary = {'method': 'equal weight per task group; exact answer scoring; failed/missing answers score zero',
+    summary = {'method': 'equal weight per task group; reference/constraint/acceptance-test scoring; failed/missing answers score zero; optional judge ratings separate',
                'comparison_key': next(iter(keys)), 'options': manifest['options'],
                'case_count': len(cases), 'sources': [str(x) for x in sources],
                'ranking': summaries, 'paired_comparisons': comparisons, 'original_model_reference':refs}
     write_json(folder / 'summary.json', summary)
     fields = ['label', 'complete', 'macro_accuracy', 'accuracy', 'correct', 'answered', 'planned',
               'errors', 'truncated', 'unparsed', 'elapsed_seconds', 'completion_tokens',
-              'effective_tokens_per_second', 'median_latency', 'p95_latency', 'folder']
+              'effective_tokens_per_second', 'median_latency', 'p95_latency', 'constraint_score','style_judge_score','style_judge_count','style_judge_errors','tool_calls','tool_errors','folder']
     with (folder / 'leaderboard.csv').open('w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
         writer.writeheader()
@@ -191,6 +198,9 @@ def generate(folder, sources=None):
     doc += '<p>The primary score gives each task group equal weight. Accuracy counts every planned question; errors and missing answers score zero. Only complete runs are ranked. Small differences need more questions and repeated runs.</p>'
     doc += '<h2>Comparison</h2><div class="table"><table><thead><tr>'+''.join('<th>'+x+'</th>' for x in ['Rank','Version / config','Balanced score','Accuracy','Answered','Errors','Cutoffs','Output tok/s¹','Minutes','Status'])+'</tr></thead><tbody>'+''.join(rows)+'</tbody></table></div>'
     doc += '<p class="muted">¹ Completion tokens divided by total request time, including prompt processing and reasoning when the server includes it in usage. This is end-to-end throughput, not pure decode speed. Missing usage is not estimated.</p>'
+    if any(s['constraint_score'] is not None or s['tool_calls'] for s in summaries):
+        doc += '<h2>Capability diagnostics</h2><p>Strict correctness is separate from the proportion of writing rules satisfied and optional subjective judge ratings. Compare judge ratings only with the same judge and rubric. These original diagnostics are not official IFEval, BFCL, vision or SWE-bench scores.</p>'
+        doc += '<div class="table"><table><thead><tr><th>Combination</th><th>Writing rules</th><th>Judge / 5</th><th>Judged answers</th><th>Judge errors</th><th>Tool calls</th><th>Tool errors</th></tr></thead><tbody>'+''.join('<tr><td>'+e(s['label'])+'</td><td>'+(pct(s['constraint_score']) if s['constraint_score'] is not None else '—')+'</td><td>'+(f"{s['style_judge_score']:.2f}" if s['style_judge_score'] is not None else '—')+'</td><td>'+str(s['style_judge_count'])+'</td><td>'+str(s['style_judge_errors'])+'</td><td>'+str(s['tool_calls'])+'</td><td>'+str(s['tool_errors'])+'</td></tr>' for s in summaries)+'</tbody></table></div>'
     doc += '<h2>Difficulty</h2><div class="table"><table><thead><tr><th>Combination</th>'+''.join('<th>'+e(x)+'</th>' for x in levels)+'</tr></thead><tbody>'+''.join(level_rows)+'</tbody></table></div>'
     doc += '<h2>Task groups</h2><div class="table"><table><thead><tr><th>Combination</th>'+''.join('<th>'+e(g)+'</th>' for g in group_names)+'</tr></thead><tbody>'+''.join(group_rows)+'</tbody></table></div>'
     doc += '<h2>Original model references</h2><p>'+e(refs['model'])+' · '+e(refs['precision_note'])+'</p><p>'+e(refs['notice'])+'</p>'
@@ -198,7 +208,7 @@ def generate(folder, sources=None):
     doc += '<p>Checked '+e(refs['checked_on'])+'. <a href="reference-scores.csv">Download references and local scores as CSV</a>. No synthetic original-model overall score is computed.</p>'
     doc += '<h2>Paired uncertainty</h2><p>Question-level paired bootstrap, stratified by task group, with repeats kept together (1,500 resamples). This measures uncertainty on this task mix, not universal model ability. Tiny suites and all-identical outcomes can give overly narrow intervals.</p><ul>'+(''.join(pairs) or '<li>Complete at least two combinations to compare.</li>')+'</ul>'
     doc += '<h2>Inspect failures</h2><input id="filter" placeholder="Filter by version, config or task"><div id="failures">'+(''.join(details) or '<p>No saved failures.</p>')+'</div>'
-    doc += '<h2>How to interpret this</h2><p>These are local zero-shot diagnostic scores. Public tasks may have appeared in model training. MATH-500 uses only numeric/rational answers and text-only questions; no official MATH-500 score is claimed. Generated difficulty labels are approximate; AIME provides competition-level problems. Algorithm tasks test reasoning about code and algorithms, not execution of generated programs. Persian arithmetic is a narrow language check. The suite does not measure writing style, vision, tool use or agentic coding.</p>'
+    doc += '<h2>How to interpret this</h2><p>These are local zero-shot diagnostic scores. Public tasks may have appeared in model training. MATH-500 uses only numeric/rational answers and text-only questions; no official MATH-500 score is claimed. Generated difficulty labels are approximate; AIME provides competition-level problems. Algorithm tasks test reasoning about code and algorithms, not execution of generated programs. Persian arithmetic is a narrow language check. The separate capability suites measure explicit writing constraints with optional quality judging, generated visual tasks, controlled tool workflows and miniature Docker-isolated Python repairs. They do not establish broad real-world writing, vision or autonomous software-engineering ability.</p>'
     doc += '<p>Read <a href="summary.json">summary.json</a> or <a href="leaderboard.csv">leaderboard.csv</a> for machine-readable scores. Full responses, requests, settings and exact questions remain in each result folder.</p>'
     doc += '<details><summary>Run settings</summary><pre>'+e(json.dumps(manifest['options'], indent=2))+'</pre></details>'
     doc += '<script>document.querySelector("#filter").addEventListener("input",e=>{const q=e.target.value.toLowerCase();document.querySelectorAll("#failures details").forEach(d=>d.hidden=!d.textContent.toLowerCase().includes(q))});</script></main></html>'

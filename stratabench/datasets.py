@@ -33,6 +33,7 @@ PROFILES = {
     'deep': {'per_bucket': 30, 'public': True},
     'full': {'per_bucket': 100000, 'public': True},
     'context': {'per_bucket': 100000, 'public': False},
+    **{name:{'per_bucket':100000,'public':False} for name in ('writing','vision','tools','coding')},
 }
 
 
@@ -248,7 +249,11 @@ def context_cases(seed, words=(2000, 8000, 16000, 32000)):
 
 def select(profile, seed=20261119, only=None, context_words=None):
     spec = PROFILES[profile]
-    cases = context_cases(seed, context_words or (2000, 8000, 16000, 32000)) if profile == 'context' else generated(seed)
+    if profile in ('writing','vision','tools','coding'):
+        from .capability_cases import select as capability_cases
+        cases = capability_cases(profile,seed)
+    else:
+        cases = context_cases(seed, context_words or (2000, 8000, 16000, 32000)) if profile == 'context' else generated(seed)
     if spec['public']:
         cases += load_public()
     if only:

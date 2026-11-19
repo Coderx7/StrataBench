@@ -151,6 +151,18 @@ def execute(args):
     if args.max_tokens is not None and args.max_tokens < 1:
         raise ValueError('The answer token limit must be positive.')
     cases = cases_for(args.profile, args.seed, args.only, args.context_words, args.tasks)
+    if any(c.get('requires_vision') for c in cases):options['keep_vision']=True
+    if args.profile in ('tools','coding'):options['agent_turns']=args.agent_turns
+    if args.profile=='coding':
+        from .coding_runtime import image_id
+        options['coding_image_id']=image_id(args.coding_image)
+        options['coding_image']=args.coding_image
+    if args.style_judge_endpoint:
+        from urllib.parse import urlsplit
+        parsed=urlsplit(args.style_judge_endpoint)
+        if args.profile!='writing' or parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or not args.style_judge_model:
+            raise ValueError('The optional writing judge needs a valid endpoint and model, and the Writing suite.')
+        options.update(style_judge_endpoint=args.style_judge_endpoint.rstrip('/'),style_judge_model=args.style_judge_model,style_judge_key_required=bool(os.environ.get('STRATABENCH_JUDGE_API_KEY')))
     if args.endpoint:
         from urllib.parse import urlsplit
         if urlsplit(args.endpoint).scheme not in ('http', 'https'):
@@ -167,6 +179,12 @@ def execute(args):
         if missing:
             raise ValueError('Prepare these versions first: ./bench add-version ' + missing[0])
         targets = make_targets([state['versions'][name] for name in names], resolve_configs(args.configs))
+    if any(c.get('requires_vision') for c in cases):
+        for target in targets:
+            if target.get('endpoint'):continue
+            config=read_json(target['config'])
+            if not config.get('vision') or versions.vision_executable(target['version'],config,target['config']) is None:
+                raise ValueError('Vision tests require an image-encoder config and an available strata-vision executable: '+target['label'])
     show_plan(cases, targets, options)
     if args.dry_run:
         return
@@ -178,6 +196,9 @@ def resume(folder):
     folder = Path(folder).expanduser().resolve()
     manifest = read_json(folder / 'manifest.json')
     targets = manifest['targets']
+    if manifest['options'].get('coding_image_id'):
+        from .coding_runtime import image_id
+        image_id(manifest['options']['coding_image_id'])
     for target in targets:
         if not target.get('endpoint'):
             new = make_targets([target['version']], [target['config']])[0]
@@ -279,6 +300,8 @@ def parser():
     q.add_argument('--jobs', type=int)
     q.add_argument('--python')
     q.add_argument('--cmake-arg', action='append', default=[], help='Example: --cmake-arg=-DFOO=ON')
+    q = sub.add_parser('prepare-coding', help='Download the isolated Python Docker runtime')
+    q.add_argument('--image', default='python:3.12-slim')
     q = sub.add_parser('source', help='Show or configure Strata acquisition settings')
     q.add_argument('--method', choices=['local','repository','folder','release'])
     q.add_argument('--repository')
@@ -312,6 +335,10 @@ def parser():
     q.add_argument('--timeout', type=float, default=1800, help='Per-request timeout in seconds')
     q.add_argument('--startup-timeout', type=float, default=900)
     q.add_argument('--port', type=int, default=18765, help='Dedicated loopback benchmark port')
+    q.add_argument('--agent-turns', type=int, choices=range(1,33), default=8, help='Maximum model turns per tool/coding task')
+    q.add_argument('--coding-image', default='python:3.12-slim')
+    q.add_argument('--style-judge-endpoint')
+    q.add_argument('--style-judge-model')
     q.add_argument('--keep-vision', action='store_true', help='Also load the image encoder (suite remains text-only)')
     q.add_argument('--model', default='strata', help='API model name (Strata accepts arbitrary names)')
     q.add_argument('--only', help='Comma-separated task groups and/or difficulty levels')
@@ -347,6 +374,9 @@ def main():
             with local_lock('.prepare.lock'):
                 initialize(args.strata_root)
             show_configs()
+        elif args.command == 'prepare-coding':
+            from .coding_runtime import prepare
+            print('Coding runtime ready: '+prepare(args.image))
         elif args.command == 'source':
             from .acquisition import configure, preferences
             data = {k:v for k,v in vars(args).items() if k != 'command' and v is not None}

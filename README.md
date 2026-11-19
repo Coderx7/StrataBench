@@ -2,7 +2,7 @@
 
 Compare **Strata versions × model configurations** on the same questions, then inspect the answers behind each score. StrataBench runs on your own computer, provides a browser GUI, and saves enough information to repeat or resume a comparison.
 
-The interface and benchmark runner use Python’s standard library. There is no Node.js setup, web build step, cloud account, or paid judging service. Strata itself has separate runtime dependencies and hardware requirements.
+The interface and benchmark runner use Python’s standard library. There is no Node.js setup, web build step, cloud account, or paid judging service for the standard suites. Writing-quality judging is an optional, separately configured feature. Strata itself has separate runtime dependencies and hardware requirements.
 
 ## Quick start
 
@@ -12,13 +12,15 @@ The interface and benchmark runner use Python’s standard library. There is no 
 
 | System | Open the app |
 | --- | --- |
-| Windows 10/11 | Double-click **`StrataBench.pyw`**. If `.pyw` files are not associated with Python, double-click **`start.bat`**. Install Python’s launcher when installing Python. |
+| Windows 10/11 | Double-click **[start.bat](start.bat)** in the extracted project folder, beside this README. **[StrataBench.pyw](StrataBench.pyw)** is another launcher if Python file associations are configured. Install Python’s launcher when installing Python. |
 | Linux | Open **`start.sh`** with your file manager’s “Run” option. If needed, run `sh start.sh` once. |
 | Either | `python -m stratabench` also opens the GUI; on Linux the command is usually `python3 -m stratabench`. |
 
-4. Open **Your setup** and choose how to obtain Strata, as described below.
+4. On first launch, the welcome window explains setup. Choose **Configure Strata** to open **Your setup**, then follow the three-step checklist. Existing installations with prepared versions keep their normal startup.
 5. Prepare one version, then select or import a model configuration in **New benchmark**.
 6. Start with **Smoke test**, confirm the reasoning setting, and run it. Then move to a larger suite.
+
+On Windows, use **Extract All** before launching. If Explorer hides file extensions, `start.bat` may appear as **start**, with type **Windows Batch File**. The launcher is in the project’s top-level folder, not inside `stratabench/` or `stratabench/web/`. It also supports installations where only `py` or `python` is on PATH.
 
 The launcher starts a server bound to `127.0.0.1` and opens your default browser. Its usual address is `http://127.0.0.1:18770/`; if that port is occupied, it chooses another free port and opens the correct address. Reopening the launcher reconnects to the running app. Do **not** open `stratabench/web/index.html` directly: the interface needs its local server.
 
@@ -41,7 +43,9 @@ On Windows, CUDA source builds need Visual Studio C++ Build Tools and a CMake-co
 
 ## Choose how Strata is obtained
 
-Open **Your setup → Strata connection**. Source preferences are stored in the ignored `settings.json` file in this app folder. There is no required machine-specific Strata path. [settings.example.json](settings.example.json) documents the file format; the GUI writes `settings.json` when you save.
+Open **Your setup → Strata connection**. The checklist tracks whether you have saved a source, prepared a version, and connected model configs. Choosing **Explore first** closes the welcome window; setup remains available in **Your setup**. The welcome acknowledgment is saved locally, so it does not repeat after reopening the app.
+
+Source preferences are stored in the ignored `settings.json` file in this app folder. There is no required machine-specific Strata path. [settings.example.json](settings.example.json) documents the file format; the GUI writes `settings.json` when you save.
 
 ### 1. Existing build
 
@@ -146,7 +150,7 @@ A Strata configuration includes `exe`, `cwd`, and an `args` array, plus the fiel
 4. Set repeats and, if needed, advanced seed, temperature, answer-token budget and timeouts.
 5. Choose **Start benchmark**.
 
-The runner evaluates one version/config combination and one question at a time. Each managed combination gets a fresh server session and the same unscored warm-up. It never sends answers to an external LLM judge.
+The runner evaluates one version/config combination and one question at a time. Each managed combination gets a fresh server session and the same unscored warm-up. Standard suites are graded locally. When you enable the optional writing judge, only that suite’s writing brief and response are sent to the judge endpoint you configure.
 
 ### Suites and difficulty
 
@@ -158,6 +162,10 @@ The runner evaluates one version/config combination and one question at a time. 
 | Deep evaluation | 648 | More coverage, including all included AIME problems. |
 | Full suite | 4,363 | Every included public/generated question. |
 | Long context | 12 | Retrieval at configurable context lengths. |
+| Writing style | 20 | Explicit writing constraints across professional, friendly, instructional and neutral briefs; optional quality judge. |
+| Vision | 20 | Generated PNG counting, spatial, grid and chart questions. |
+| Tool use | 15 | Multi-step customer/order/tax workflows with controlled function calls. |
+| Agentic coding | 10 | Small Python repair projects with file tools, visible tests and hidden acceptance tests. |
 
 Default counts depend on the pinned dataset selection and difficulty filters. Long-context sizes are **words**, not tokens, and must fit the selected model configuration. The app shows a time range per configuration and for the whole matrix. Unmeasured estimates use an RTX 3080 / 64 GB planning baseline; other hardware can differ substantially. Observed timings for the same version/config/reasoning/budget improve estimates. Reasoning can make hard questions take much longer than easy ones.
 
@@ -169,11 +177,29 @@ Included public tasks are GSM8K, OpenBookQA, eight BIG-Bench Hard tasks, the num
 
 **Activity** shows progress and clickable counts for Correct, Incorrect, Cutoffs, Request errors and Pending. **Results** and saved reports expose the same test explorer.
 
-The explorer provides cards, search, combination/difficulty/task-group filters, pagination and a detailed view of each question, reference answer, model response, extracted answer, supplied reasoning, request settings and token usage. It updates while a run is active. Retried requests count once using their latest saved attempt; earlier attempts remain in the raw log.
+The explorer provides **Grid** and **List** views, search, combination/difficulty/task-group filters, pagination and a detailed view of each question, reference answer, model response, extracted answer, supplied reasoning, request settings and token usage. The selected layout is remembered in that browser, and filters/pagination stay in place when you switch layouts. It updates while a run is active. Retried requests count once using their latest saved attempt; earlier attempts remain in the raw log.
 
 Correctness uses known reference answers and deterministic graders. Numeric equivalents, supported exact/choice answers and structured JSON are checked by the appropriate grader. A response cut off by its token limit counts as a failure. Request errors are tracked separately. Missing work earns no credit and incomplete combinations are excluded from rankings. The report includes ordinary accuracy, balanced task-group accuracy and uncertainty/comparison information.
 
 These results are **local protocol scores**, not official leaderboard replications: prompts, reasoning, budgets, numeric-only filtering and sampled subsets can differ from published protocols. Small sampled differences should be checked with more questions and repeats.
+
+### Writing, vision, tools and agentic coding
+
+These four suites are **original StrataBench diagnostics**, separate from the existing accuracy suite. They are not official IFEval, BFCL, SWE-bench or general vision benchmark scores. Their difficulty tiers are relative to these small diagnostic tasks. The [IFEval work](https://github.com/google-research/google-research/tree/master/instruction_following_eval) provides background on verifiable instruction-following; the [Berkeley Function Calling Leaderboard](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard) provides background on tool-call evaluation. This app does not copy their datasets or claim their scores.
+
+**Writing style:** strict correctness means every explicit rule passes. A separate constraint-compliance score shows the fraction of rules satisfied. Rules cover word ranges, titles, list structure, required phrases, forbidden wording, sentence length and text blocks. These checks do not establish that prose is natural, persuasive or artistically good.
+
+Enable **Add an independent writing-quality judge** to add ratings for clarity, tone, coherence and effectiveness, each from 1 to 5. Enter an OpenAI-compatible `/v1` endpoint, a model name and optionally its API key. The judge may be a separate local server or a remote service. It receives the writing brief and response. Its key stays in browser/app/worker memory and is not saved in settings, command-line arguments or reports; alternatively launch the app with `STRATABENCH_JUDGE_API_KEY` set. The rubric, judge model, endpoint, ratings, coverage and errors are recorded. Judge ratings never replace deterministic correctness. Compare them only with the same judge and rubric; remote services may charge for calls, and local judges need their own available resources. If you restart the app before resuming a run that needs a key, Resume asks for the original judge’s key again. Judge errors leave local scores intact and are inspectable separately.
+
+**Vision:** the runner sends actual generated PNG images through the multimodal API and enables the configured image encoder automatically. The inspector displays each image. Select configs with working `vision` settings and existing image-encoder weights. The runner prefers a prepared version’s `strata-vision` executable; if absent, it can reuse the explicitly configured encoder. The encoder executable and projector metadata are recorded so engine comparisons can use a fixed encoder. No vision model weights are downloaded automatically.
+
+**Tool use:** the model must actually look up customer IDs, retrieve orders, select the requested records, obtain tax where needed, and call the calculation tool. A guessed final number without the required calls does not pass. The provided tools operate on generated test data and expose no external services or host commands. Schema errors, required calls, filtered inputs and turn limits are checked. The inspector shows the full model/tool conversation.
+
+**Agentic coding:** the model uses `list_files`, `read_file`, `write_file` and `run_tests` on a small project. Only `solution.py` is editable. Final scoring uses separate hidden acceptance inputs, including seeded variations. The tasks include arithmetic repairs, order-preserving deduplication, medians, interval merging, bracket validation, knapsack, edit distance, LRU behavior and weighted scheduling. This measures small tool-assisted repairs, not broad autonomous repository engineering.
+
+Coding requires **Docker running in Linux-container mode**, including on Windows through Docker Desktop. Select **Prepare coding runtime** in the Coding suite to download the Python image once. The default is `python:3.12-slim`; its resolved immutable image ID is recorded for a run and reused on resume. Test containers use no host-folder mounts or network, a read-only root, one CPU, 256 MB memory, a process limit and time/output limits. See Docker’s [run options](https://docs.docker.com/engine/containers/run/) and [resource limits](https://docs.docker.com/engine/containers/resource_constraints/). The app never falls back to executing generated code on the host.
+
+Tool/coding suites have a configurable maximum model-turn count (default 8). Their automatic output budget is at most 4,096 tokens per turn; a custom maximum-token setting overrides it. Multi-turn tasks and optional judging increase runtime. Their timing history is kept separate from the ordinary accuracy suite. Agent rows include tool/test time; optional judge time is recorded separately from model-generation latency.
 
 ### Original-model references
 
@@ -216,7 +242,7 @@ Use **New benchmark → Choose file** to import JSONL, with one object per line.
 {"id":"my-task-001","group":"my_work","difficulty":"easy","prompt":"What is 6 times 7?","answer":42,"grader":"numeric"}
 ```
 
-Required fields: `id`, `group`, `difficulty`, `prompt`, `answer`, `grader`. IDs must be unique. Difficulty is `easy`, `medium`, `hard`, `very_hard` or `extreme`; grader is `numeric`, `exact`, `choice` or `json`. JSON tasks can use objects/lists as their reference answer. These are single-turn answer checks, not an agent/tool-use benchmark.
+Required fields: `id`, `group`, `difficulty`, `prompt`, `answer`, `grader`. IDs must be unique. Difficulty is `easy`, `medium`, `hard`, `very_hard` or `extreme`; grader is `numeric`, `exact`, `choice` or `json`. JSON tasks can use objects/lists as their reference answer. The documented imported-case format describes single-turn reference-answer checks; the built-in Tool use and Agentic coding suites provide the controlled multi-turn workflows.
 
 ## Optional command line
 
@@ -257,7 +283,7 @@ python -m stratabench compare "/path/to/results/RUN_A" "/path/to/results/RUN_B"
 
 For Windows paths, use values such as `"C:\Models\Strata"`, `"C:\Python312\python.exe"` and `"C:\Models\venv\Scripts\python.exe"`. The commands themselves are the same; no Bash environment is required.
 
-Advanced runs accept `--max-tokens`, `--timeout`, `--startup-timeout`, `--temperature`, `--seed`, `--only`, `--context-words`, `--tasks`, `--port` and `--dry-run`. `python -m stratabench run --help` lists them. Source preparation also accepts `--jobs`, `--python` and repeated `--cmake-arg=-DNAME=value` options.
+Advanced runs accept `--max-tokens`, `--timeout`, `--startup-timeout`, `--temperature`, `--seed`, `--only`, `--context-words`, `--tasks`, `--port` and `--dry-run`. Capability suites also support `--agent-turns`, `--coding-image`, `--style-judge-endpoint` and `--style-judge-model`. `python -m stratabench run --help` lists them. Source preparation also accepts `--jobs`, `--python` and repeated `--cmake-arg=-DNAME=value` options.
 
 To attach to a server you manage yourself:
 
@@ -307,7 +333,7 @@ Run the checks with:
 python -m unittest discover -s tests -v
 ```
 
-The suite uses temporary files and local fake API servers; it does not download model weights or need a GPU/compiler. The optional cached-public-data check is skipped when the raw dataset cache is absent. GitHub Actions is configured for Linux and Windows with Python 3.11, 3.12 and 3.13. Native GPU/driver/Strata integration still depends on the selected engine package and machine.
+The suite uses temporary files and local fake API servers; it does not download model weights or need a GPU/compiler. The tests include persisted source settings, first-run guidance, both inspector layouts, generated capability cases, tool orchestration and optional-judge separation. Native batch-launcher checks run on Windows. For actual container checks with an already prepared image, set `STRATABENCH_DOCKER_TEST_IMAGE=python:3.12-slim` when running tests; these checks do not pull images automatically. The optional cached-public-data check is skipped when the raw dataset cache is absent. GitHub Actions is configured for Linux and Windows with Python 3.11, 3.12 and 3.13. Native GPU/driver/Strata integration still depends on the selected engine package and machine.
 
 For interface syntax checks, Node is optional:
 
@@ -318,6 +344,6 @@ node --check stratabench/web/outcomes.js
 node --check stratabench/web/helpers.js
 ```
 
-Local settings, model files, downloaded binaries, virtual environments, runtime credentials, logs and benchmark results are excluded from Git. Public source URLs and upstream references are retained for reproducibility. Nothing is published or uploaded by the GUI. Dataset downloads, Git source retrieval, release downloads and isolated Python package installation are the network operations used during preparation.
+Local settings, model files, downloaded binaries, virtual environments, runtime credentials, logs and benchmark results are excluded from Git. Public source URLs and upstream references are retained for reproducibility. No benchmark output is uploaded by default. Enabling a writing judge sends that writing brief and response to its configured endpoint. Dataset downloads, Git source retrieval, release downloads and isolated Python package installation are the network operations used during preparation.
 
 Strata, model weights, runtime packages and datasets retain their respective licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the licenses in prepared version sources.
