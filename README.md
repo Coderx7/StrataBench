@@ -1,208 +1,323 @@
 # StrataBench
 
-Compare **Strata version × model config × reasoning setting** on your own PC. Start with a small comparison, then give the strongest combinations more questions.
+Compare **Strata versions × model configurations** on the same questions, then inspect the answers behind each score. StrataBench runs on your own computer, provides a browser GUI, and saves enough information to repeat or resume a comparison.
 
-This folder is self-contained. The runner uses Python's standard library. It launches Strata using your existing Strata Python environment, reuses your model files and packs, and never updates your installation, installs drivers, changes system settings, or edits your original configs. New engines, temporary configs, logs and results stay here.
+The interface and benchmark runner use Python’s standard library. There is no Node.js setup, web build step, cloud account, or paid judging service. Strata itself has separate runtime dependencies and hardware requirements.
 
-## Open the graphical app
+## Quick start
 
-**Double-click the StrataBench shortcut on your Desktop.** A graphical app opens in your default browser. There is no terminal window and nothing to install. There is also a `StrataBench.desktop` launcher in this folder.
+1. Download this repository as a ZIP and extract it, or clone it with Git.
+2. Install **Python 3.11 or newer**, if it is not already installed. Use a normal writable folder for StrataBench.
+3. Open the launcher for your system:
 
-- **New benchmark:** select versions and model configurations, choose a suite, confirm reasoning (default **xhigh**), and click **Start benchmark**. The plan updates as you change selections.
-- **Activity:** follow model loading, question progress, correct/incorrect answers, and errors. **Stop & save** keeps completed answers. Click any correct, incorrect, cutoff, request-error, or pending count to open the **Test explorer** while the benchmark is running. The detailed activity panel contains diagnostic output when needed.
-- **Results:** view saved reports inside the app, open full reports, download CSV, resume unfinished runs (including those found after reopening the app), or compare selected runs with matching questions/settings. **Inspect tests** opens a searchable card gallery with combination, difficulty, and task-group filters. Each test shows its question, reference answer, model response, reasoning when supplied, and request details. The same clickable counts appear above saved reports.
-- **Strata versions:** add a release tag to build it separately, or import an existing build.
-- **Model references:** inspect verified published original-model scores, weight precision, evaluation method, and source links. Results reports and the separate references CSV include the same information alongside local group scores.
-- **Your setup:** check hardware, verify/download public datasets, or change the Strata folder used to discover configurations.
+| System | Open the app |
+| --- | --- |
+| Windows 10/11 | Double-click **`StrataBench.pyw`**. If `.pyw` files are not associated with Python, double-click **`start.bat`**. Install Python’s launcher when installing Python. |
+| Linux | Open **`start.sh`** with your file manager’s “Run” option. If needed, run `sh start.sh` once. |
+| Either | `python -m stratabench` also opens the GUI; on Linux the command is usually `python3 -m stratabench`. |
 
-The app serves only on your own PC. All interface assets are bundled, with no external fonts, scripts, or analytics. Close the browser tab freely: a running benchmark continues in the background, and the desktop shortcut reopens the same app. Use **Quit StrataBench** to shut down the app after its current operation has finished or been stopped. Stop/resume preserves the benchmark runner's original behavior and checks.
+4. Open **Your setup** and choose how to obtain Strata, as described below.
+5. Prepare one version, then select or import a model configuration in **New benchmark**.
+6. Start with **Smoke test**, confirm the reasoning setting, and run it. Then move to a larger suite.
 
-The Desktop shortcut starts the required local server automatically. Once it is running, you can open or bookmark `http://127.0.0.1:18770/` in any browser; a fresh browser session connects automatically. Open the shortcut again after a reboot or after choosing Quit. Do not open `stratabench/web/index.html` as a standalone file: it is the app's interface, not a standalone application. Smaller browser windows keep navigation labels and a Start button visible, with the settings available by scrolling.
+The launcher starts a server bound to `127.0.0.1` and opens your default browser. Its usual address is `http://127.0.0.1:18770/`; if that port is occupied, it chooses another free port and opens the correct address. Reopening the launcher reconnects to the running app. Do **not** open `stratabench/web/index.html` directly: the interface needs its local server.
 
-You can import config JSON or question JSONL files using normal file choosers. Imports are saved as separate copies in this workspace. Imported configs must include an absolute `cwd` field so their model paths resolve correctly. Exclude other difficulty levels to run just the questions you want. Custom question files use their supplied difficulty labels without the preset difficulty filter.
+On Linux, `python3 make-shortcut.py` creates a `StrataBench.desktop` launcher with paths for your checkout. Copy it to your Desktop and allow launching if your desktop asks. The generated file is intentionally ignored by Git. On Windows, a normal shortcut to `StrataBench.pyw` or `start.bat` works.
 
-The desktop launcher uses your existing system Python. It does not register a background service, install a system package, change Strata, or add an application-store dependency.
+## Requirements
+
+| Feature | Requirements |
+| --- | --- |
+| GUI, generated smoke questions, scoring and reports | Python 3.11+, a browser, a writable app folder |
+| Existing Strata build | A working engine, matching Python server and tokenizer helper, compatible model files/configs |
+| Portable release | Internet access, a matching Linux/Windows portable engine archive, a compatible GPU/driver, and Strata’s Python runtime dependencies. **Git and a compiler are not required.** |
+| Build from a repository | Git, CMake 3.24+, a supported C++ compiler, NVIDIA CUDA Toolkit with `nvcc`, and a compatible NVIDIA GPU/driver |
+| Build from a local Git folder | The same build tools, plus the desired revision already present locally |
+| Public benchmark suites | Internet access for the initial dataset download; cached data is reused afterward |
+
+Source builds currently target **CUDA**. AMD HIP and Intel SYCL can be used through compatible portable packages or an existing build. Not every Strata release provides every operating-system, architecture, or backend combination. Model and backend compatibility remain properties of the chosen Strata version.
+
+On Windows, CUDA source builds need Visual Studio C++ Build Tools and a CMake-compatible compiler environment. If the compiler is not found when opening the GUI normally, launch from a configured developer environment or use portable releases instead. StrataBench does not install compilers, drivers, system packages, or change system PATH.
+
+## Choose how Strata is obtained
+
+Open **Your setup → Strata connection**. Source preferences are stored in the ignored `settings.json` file in this app folder. There is no required machine-specific Strata path. [settings.example.json](settings.example.json) documents the file format; the GUI writes `settings.json` when you save.
+
+### 1. Existing build
+
+Use this if Strata already works on your computer.
+
+- Select **Existing build** and enter its installation folder.
+- **Detect** checks the entered/saved folder, `STRATABENCH_STRATA_ROOT`, `STRATA_HOME`, a sibling `Strata` folder, `~/Strata`, and installations found through `strata` on PATH.
+- Enter the folder containing your model JSON files separately if needed.
+- Choose an existing Python environment, or let StrataBench create an isolated one.
+- Enter a build label and choose **Save & prepare version**.
+
+A usable installation contains either:
+
+```text
+Strata/                         Strata/
+  serve/server.py                 terminal/serve/server.py
+  tools/strata_tokenizer.py        terminal/tools/strata_tokenizer.py
+  engine/strata                   engine/strata.exe
+```
+
+The left layout illustrates Linux; the right illustrates Windows and the newer repository layout. Both server layouts work on either OS. Engine detection checks `engine/`, the installation root, `bin/`, `build/`, `build/Release/`, and the equivalent `engine/build/` locations, using `strata.exe` on Windows and `strata` on Linux.
+
+For an unusual engine location, use **Strata versions → Import existing build**, which accepts an explicit engine and Python path.
+
+The engine, shared libraries, server and tokenizer helpers are copied into `versions/<label>/`. Model weights stay in place. A label names the build you selected; entering another release number does **not** turn that existing binary into that release. Choose one of the following methods to obtain different releases.
+
+### 2. Portable release
+
+Use this to avoid compilation.
+
+1. Select **Portable release**.
+2. Enter the GitHub repository, normally `https://github.com/Niko1221/Strata.git`.
+3. Choose the binary backend: CUDA 12, CUDA 13, HIP, or SYCL. It must match your hardware and driver.
+4. Enter a published release tag, or `latest`, and select **Check release**.
+5. Leave **Portable asset** on Auto if exactly one file matches. Otherwise select a specific compatible asset.
+6. Choose **Save & prepare version**.
+
+The app queries GitHub release metadata, selects an archive for the current OS/architecture/backend, verifies its published SHA-256, and extracts it into its own version folder. It also retrieves server source from the **same release tag resolved to a source commit**. It supports portable ZIP, `.tar.gz`, and `.tgz` packages. It does not run installers, AppImages, shell installation scripts, or PowerShell installation scripts.
+
+Checksums come from the GitHub asset digest or a release checksum file. If neither is published, preparation stops unless **Allow portable packages with no published SHA-256 checksum** is enabled explicitly. A published checksum is always checked; enabling that option never ignores a mismatch. The observed archive hash and whether it was verified are recorded in `version.json`.
+
+Current Strata releases may use different numbers for the desktop app and engine. The selected release tag, source commit, asset filename/hash and the engine’s available build metadata are recorded separately. The GUI does not assume that an app release number is an engine version number.
+
+Some older releases offer only Windows packages. If **Check release** finds no compatible file, choose another release/backend, use an existing build, or build from source. An ambiguous package selection stops with an explanation instead of choosing another GPU variant automatically.
+
+This method uses public GitHub releases. For a private repository, use a local Git source folder or an existing build.
+
+### 3. Clone & build
+
+Use this to compare committed versions from a Git repository or a Strata fork.
+
+- Select **Clone & build** and enter an HTTPS Git repository URL.
+- Set **Parallel build jobs** and **CUDA architecture**.
+- Optionally enter additional CMake definitions, one `-DNAME=value` per line.
+- Enter a tag, commit or branch name, then choose **Save & prepare version**.
+
+StrataBench clones into an app-owned Git cache under `versions/_git/`, fetches the requested revision, resolves its commit, exports a separate source tree and builds there. It never checks out or edits an existing external repository. Prepared versions stay pinned; the same label is not silently rebuilt when an upstream branch or tag moves.
+
+`native` asks CMake to detect the installed GPU. For an RTX 3080, `86` is an explicit alternative. Multiple targets use CMake’s semicolon format, for example `86;89`. Some older toolkit/CMake combinations require an explicit number. Source builds use the CUDA backend; the portable-backend dropdown does not change the source-build backend.
+
+The build handles both the original top-level CMake project and the newer `engine/CMakeLists.txt` layout. Older revisions with a `third_party/ggml/VERSION.txt` dependency pin receive that pinned dependency in the app’s cache. Forks need a compatible Strata server/config/CMake layout.
+
+Build logs are saved per version. If preparation fails, diagnostic build logs are retained under `versions/_failed/`, while the incomplete version directory is removed so the same label can be tried again. Download caches are reused and verified. If a process was forcibly stopped during preparation, the next attempt preserves that app-owned partial folder under `versions/_failed/` before retrying. An unrelated unregistered folder is left untouched.
+
+### 4. Build from folder
+
+Use this for a Strata Git checkout already on your machine.
+
+- Select **Build from folder** and enter the repository folder.
+- Enter a tag, branch name or commit that already exists in that repository.
+- Configure build jobs/architecture and prepare the version.
+
+The app exports the selected commit with Git and builds the export. It does not fetch into your checkout, switch its branch, or include uncommitted changes. To benchmark an uncommitted custom build, compile it yourself and import it as an **Existing build** with a distinct label.
+
+### Python runtime choice
+
+StrataBench itself has no pip requirements. Strata’s Python server does.
+
+- **Create an isolated environment per version:** creates `versions/<version>/.venv/` using the selected Python, then installs the runtime requirements from that Strata source. For older layouts without a runtime requirements file, it installs `jinja2`, `regex`, and `numpy`. It does not install global packages or build tools.
+- **Reuse an existing environment:** validates the core server imports and reuses the selected interpreter. With no explicit executable, it looks for `.venv` in the installation or its `terminal/` folder, then uses the app’s Python. Additional dependencies required by a particular Strata revision must already be installed there.
+
+An optional Python executable controls the reused interpreter or the interpreter used to create the isolated environment. On Windows this is normally a `python.exe`, not a folder. Existing saved installations keep the existing-environment preference when their settings are first migrated.
+
+## Connect model configurations
+
+Strata source settings determine how an **engine/server** is prepared. Model JSON files determine which **weights, tokenizer and inference settings** it uses.
+
+- Set **Model configuration folder** to discover `strata-*.json` files.
+- Or use **New benchmark → Import config** to copy an individual JSON file into the app.
+- Imported configurations require an absolute `cwd` so relative model paths have a clear base.
+- The runner substitutes the prepared version’s executable and creates a separate effective config for each session. Your original config is preserved.
+- Model weights, packs, tokenizers and optional prediction models must already exist. Preparing an engine never downloads model weights.
+- Configs contain local paths: update those paths when moving between computers or between Linux and Windows.
+
+A Strata configuration includes `exe`, `cwd`, and an `args` array, plus the fields required by that model/version. Start with a config that already works in Strata. StrataBench records its hash and input metadata rather than treating a config filename as proof of identity.
+
+## Run a comparison
+
+1. Open **Strata versions**, prepare any additional versions, and choose the ordering. Numeric version sorting and custom ordering are available; drag tiles or use **Move earlier/later**.
+2. Open **New benchmark**, select versions and model configs, and choose a suite.
+3. Confirm **Reasoning effort**. The default is **xhigh**; off, low, medium, high, xhigh and server/config defaults are available.
+4. Set repeats and, if needed, advanced seed, temperature, answer-token budget and timeouts.
+5. Choose **Start benchmark**.
+
+The runner evaluates one version/config combination and one question at a time. Each managed combination gets a fresh server session and the same unscored warm-up. It never sends answers to an external LLM judge.
+
+### Suites and difficulty
+
+| Suite | Default questions per combination | Purpose |
+| --- | ---: | --- |
+| Smoke test | 7 | Check loading, requests, scoring and saving across difficulty levels. Not a model-quality ranking. |
+| Quick comparison | 69 | Screen a set of versions/configs. |
+| Standard | 276 | Compare a shortlist with more coverage. |
+| Deep evaluation | 648 | More coverage, including all included AIME problems. |
+| Full suite | 4,363 | Every included public/generated question. |
+| Long context | 12 | Retrieval at configurable context lengths. |
+
+Default counts depend on the pinned dataset selection and difficulty filters. Long-context sizes are **words**, not tokens, and must fit the selected model configuration. The app shows a time range per configuration and for the whole matrix. Unmeasured estimates use an RTX 3080 / 64 GB planning baseline; other hardware can differ substantially. Observed timings for the same version/config/reasoning/budget improve estimates. Reasoning can make hard questions take much longer than easy ones.
+
+Included public tasks are GSM8K, OpenBookQA, eight BIG-Bench Hard tasks, the numeric/text-only subset of MATH-500, and AIME 2024. Generated tasks cover arithmetic, JSON transformations, Python tracing, graphs, combinatorics, exact scheduling, Persian arithmetic and long-context retrieval. Difficulty labels are heuristic.
+
+**Your setup → Verify / download public datasets** prepares the cache. A run needing public data also prepares it automatically. The generated smoke suite works without public downloads. Pinned URLs, hashes and dataset notices live in `datasets/sources.lock.json` and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### Scores and answer inspection
+
+**Activity** shows progress and clickable counts for Correct, Incorrect, Cutoffs, Request errors and Pending. **Results** and saved reports expose the same test explorer.
+
+The explorer provides cards, search, combination/difficulty/task-group filters, pagination and a detailed view of each question, reference answer, model response, extracted answer, supplied reasoning, request settings and token usage. It updates while a run is active. Retried requests count once using their latest saved attempt; earlier attempts remain in the raw log.
+
+Correctness uses known reference answers and deterministic graders. Numeric equivalents, supported exact/choice answers and structured JSON are checked by the appropriate grader. A response cut off by its token limit counts as a failure. Request errors are tracked separately. Missing work earns no credit and incomplete combinations are excluded from rankings. The report includes ordinary accuracy, balanced task-group accuracy and uncertainty/comparison information.
+
+These results are **local protocol scores**, not official leaderboard replications: prompts, reasoning, budgets, numeric-only filtering and sampled subsets can differ from published protocols. Small sampled differences should be checked with more questions and repeats.
 
 ### Original-model references
 
-The bundled, revision-pinned reference catalog is `datasets/reference-scores.json`. The verified original post-trained **Qwen/Qwen3.8-Flash-Next BF16** reference currently included is **GSM8K: 96.92%**, from [ISTA-DASLab's evaluation of the original BF16 weights](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-P48NVFP4-MoESQ/blob/80266c60ab7b2b357ab01c3675eec5f12afef4b4/README.md#openllm-leaderboard-v1-6-task-average). This is an independent original-weight result, not a Qwen vendor-reported score and not the quantized MoESQ model's result. BF16 means bfloat16; it is distinct from FP16, FP32 and INT8. Both weight and KV precision are recorded when the source supplies them.
+**Model references** records published reference scores with their dataset, source, evaluation method and weight precision. Missing scores remain unavailable; quantized scores are not presented as original-model results.
 
-That reference uses 5-shot chat with thinking off, greedy sampling and strict matching, averaged over three few-shot seeds. Our suite uses different zero-shot prompts, reasoning settings, token budgets and often smaller question subsets. Published scores are therefore labelled **Context only**. No quantization-loss percentage or synthetic overall original-model score is derived from them. The local leaderboard and its rankings remain based entirely on your own matched runs.
+The included Qwen3.8-Flash-Next GSM8K reference is labeled **BF16**, with its independent evaluation method and a **Context only** comparison label. BF16 is distinct from FP16, FP32 and INT8. The reference catalog does not assert that a small local subset, xhigh reasoning or a local quantized model reproduces that published evaluation. References also appear in reports and a separate CSV.
 
-No verified precision-labelled score for this exact MATH-500 numeric/text-only subset, AIME 2024, OpenBookQA or the included individual BBH tasks was found. These entries explicitly say **Not available**, with a reason. Pretrained Base-model aggregates, other AIME years, combined-year results and other quantizations are not substituted. Generated and custom tasks have no published reference. The Qwen model card, original checkpoint dtype and technical report were checked; additional reference results can be curated into the catalog when the original weights, precision and evaluation setup can be verified.
+## Stop, resume and keep results
 
-### Version sorting and custom ordering
+- Closing the browser tab does not stop a running benchmark. Reopen the launcher to reconnect.
+- Choose **Stop & save** in Activity to stop the owned worker and preserve saved answers.
+- Choose **Resume** from Activity, Results or the Test explorer to continue the saved run. Unfinished runs are discovered again after restarting the app.
+- Correct, incorrect and cutoff answers stay in place. Pending evaluations and request errors are retried.
+- Resume uses the original saved questions, configurations, versions and request settings, not the current selections in New benchmark.
+- Each resume opens a new model session; engine caches and learned session state may differ from an uninterrupted session.
 
-The default is **Newest first**, sorted numerically (`v0.1.40.12` follows `v0.1.40.4` correctly). On **Strata versions**, select **Oldest first** or **Custom order**. Drag cards, or use **Move earlier / Move later** for keyboard-accessible reordering. Moving a card switches to Custom order and saves it in the local settings. Newly added versions go to the end of a custom order; switching back to a numbered sort includes them automatically. The same order is used by the version selector and for starting the selected benchmark combinations.
+On Linux, stopping requests a graceful interrupt. On Windows, the app stops its owned worker process tree; a request still in flight may have no saved row and is retried later. Saved answer rows are flushed individually. A process-ending crash can leave a manifest marked running; without a held run lock it is shown as unfinished again.
 
-### Approximate suite duration
+Resume validates source/config/model fingerprints, inherited engine environment and benchmark code. **Finish or stop a run before updating StrataBench, and keep the original app revision to resume old runs if a code update changes the protocol.** It refuses to mix changed scoring code, changed model inputs or changed settings into the same run.
 
-Each suite card shows an approximate range for your selection. Each config card shows the selected suite's estimated time across the selected versions, and the evaluation plan sums the sequential matrix with a per-config breakdown. Changing reasoning, repeats, difficulty selection, token limit, context sizes, versions or configs updates the estimates.
+Reports and raw files are under `results/<run-id>/`:
 
-These are **planning ranges**, not promised completion times. Initial assumptions distinguish model/quantization families on your RTX 3080 / 64 GB PC; untested settings within a family can share a range. Larger disk-streamed quants receive slower throughput assumptions. Each combination includes loading and warm-up; version builds and dataset/model downloads are excluded. A local timing history automatically refines estimates only for the same config hash, version, reasoning setting, difficulty and token budget. Errors are excluded; completed and cut-off responses can inform duration. A few short arithmetic measurements do not calibrate hard reasoning. Default/server reasoning is kept separate from explicitly selected xhigh timings.
+| File | Contents |
+| --- | --- |
+| `manifest.json` | Saved plan, target identities, hardware, status and protocol hashes |
+| `cases.json` | Exact questions and reference answers |
+| `<target>/answers.jsonl` | Durable per-request answer/error attempts and raw responses |
+| `<target>/session-*/` | Effective configs, launch details and server/engine logs |
+| `report.html`, `report.txt` | Readable reports |
+| `summary.json`, `leaderboard.csv` | Machine-readable summaries |
+| `reference-scores.csv` | Published original-model context alongside local task scores |
 
-The intervals are deliberately broad when there are few measurements or untested difficulty levels. Thinking length, context paging, adaptive expert caches, SSD speed and other PC activity can move real time outside a displayed range. Long-context estimates also include approximate document-reading time and a context-capacity notice when applicable. Estimating never starts a model or downloads a dataset.
+Only runs with matching questions, settings, environment and scoring protocol can be combined with **Compare selected**. Prepared versions and result folders are never silently overwritten.
 
-## Optional terminal interface
+## Custom questions
 
-Open a terminal in this folder and run:
+Use **New benchmark → Choose file** to import JSONL, with one object per line. See [examples/custom-tasks.jsonl](examples/custom-tasks.jsonl).
 
-```bash
-./start.sh
+```json
+{"id":"my-task-001","group":"my_work","difficulty":"easy","prompt":"What is 6 times 7?","answer":42,"grader":"numeric"}
 ```
 
-This now opens the graphical app. To use the original terminal menu instead, run `./bench`. Choose **1 — Run benchmarks**, select one or more prepared versions and configs, and choose a preset. The menu **asks for reasoning on every new run**, with **xhigh** as the default. Press Enter to accept defaults. Choose `off`, `low`, `medium`, `high`, `xhigh`, or `default` to leave reasoning to the server/config. On your current Qwen template, `high` maps to `xhigh`.
+Required fields: `id`, `group`, `difficulty`, `prompt`, `answer`, `grader`. IDs must be unique. Difficulty is `easy`, `medium`, `hard`, `very_hard` or `extreme`; grader is `numeric`, `exact`, `choice` or `json`. JSON tasks can use objects/lists as their reference answer. These are single-turn answer checks, not an agent/tool-use benchmark.
 
-Your current **v0.1.40.4** engine and matching server are already copied into `versions/v0.1.40.4/`. The menu discovers your original model configs in:
+## Optional command line
+
+The GUI is the normal workflow. The same operations are available through `python -m stratabench ...` or `python bench ...`. Replace `python` with `python3` where appropriate. Quote paths containing spaces.
+
+```bash
+# Configure portable releases, then prepare a pinned release.
+python -m stratabench source --method release --repository https://github.com/Niko1221/Strata.git --backend cuda12 --python-mode managed
+python -m stratabench add-version v0.2.16
+
+# Clone and build source for a specific CUDA architecture.
+python -m stratabench source --method repository --repository https://github.com/Niko1221/Strata.git --cuda-architectures 86 --build-jobs 4
+python -m stratabench add-version v0.1.45
+
+# Build a committed revision from a local checkout.
+python -m stratabench source --method folder --folder "/path/to/Strata" --config-folder "/path/to/model-configs"
+python -m stratabench add-version v0.1.45
+
+# Import an existing build with explicit paths if needed.
+python -m stratabench snapshot --name my-build --source "/path/to/Strata" --exe "/path/to/strata" --python "/path/to/venv/bin/python"
+
+# List the current preferences, prepared versions and discovered configs.
+python -m stratabench source
+python -m stratabench versions
+python -m stratabench configs
+python -m stratabench doctor
+
+# Cache public data, inspect task counts, or run a comparison.
+python -m stratabench datasets
+python -m stratabench tasks --profile quick
+python -m stratabench run --versions v0.1.45 --configs "/path/to/model-config.json" --profile quick --reasoning xhigh --repeats 3
+
+# Resume or regenerate reports from saved files.
+python -m stratabench resume "/path/to/results/RUN_ID"
+python -m stratabench report "/path/to/results/RUN_ID"
+python -m stratabench compare "/path/to/results/RUN_A" "/path/to/results/RUN_B"
+```
+
+For Windows paths, use values such as `"C:\Models\Strata"`, `"C:\Python312\python.exe"` and `"C:\Models\venv\Scripts\python.exe"`. The commands themselves are the same; no Bash environment is required.
+
+Advanced runs accept `--max-tokens`, `--timeout`, `--startup-timeout`, `--temperature`, `--seed`, `--only`, `--context-words`, `--tasks`, `--port` and `--dry-run`. `python -m stratabench run --help` lists them. Source preparation also accepts `--jobs`, `--python` and repeated `--cmake-arg=-DNAME=value` options.
+
+To attach to a server you manage yourself:
+
+```bash
+python -m stratabench run --endpoint http://127.0.0.1:8080/v1 --label my-existing-server --profile smoke --reasoning xhigh
+```
+
+External endpoints are not started or stopped by StrataBench. Their version/config identity is user supplied rather than a verified binary fingerprint. `STRATABENCH_API_KEY` supplies authentication for such an endpoint without embedding the key in a saved config.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| Page is incomplete after opening a local HTML file | Open the app launcher instead. It starts the local server. |
+| No Strata installation is detected | Enter its folder explicitly. Existing-build mode needs both the engine and matching server/tokenizer files. |
+| No model configs appear | Set Model configuration folder or import a JSON file. Config discovery looks for `strata-*.json`. |
+| No compatible release file | Check OS/architecture/backend and release tag. Some releases have no Linux binaries or several HIP variants. Use the asset picker, another tag, or source mode. |
+| GitHub release lookup fails | Check the URL, published tag, network, and public GitHub API rate limit. An ordinary Git tag is not necessarily a published release. |
+| Checksum mismatch | The package is rejected and its cached download removed. Retry after checking the upstream release. A mismatching checksum cannot be overridden. |
+| CMake, nvcc or C++ compiler missing | Use portable binaries, or install/configure the build tools yourself. Windows source builds may need a developer environment. |
+| CUDA architecture detection fails | Set an explicit supported architecture, for example `86` for RTX 3080. |
+| Server exits while loading | Read Activity and the saved server/engine logs. Check model paths, quantization support, Python dependencies, driver/backend and RAM/VRAM. |
+| Existing Python lacks dependencies | Select a working Strata interpreter or switch to the isolated-environment option. |
+| Revision missing from a local source folder | Fetch it yourself in that checkout, then retry; or use Clone & build mode. |
+| Version label already exists | Use that prepared version or select another label for a distinct build. It is not overwritten. |
+| Run cannot resume after an update | Return to the original StrataBench revision and original inputs/settings, or start a new run. Do not edit a manifest to bypass identity checks. |
+| Long-context test gets a context error | Reduce context words or answer-token budget, or use a config with sufficient context capacity. |
+| Other hardware is slower than the estimate | Start with smoke/quick and let matching local timing history accumulate. Unmeasured ranges are planning estimates. |
+
+## Development and repository contents
 
 ```text
-/media/hossein/SSD/strarta_stuff/Strata
+stratabench/                 Python runner, scoring, acquisition and local GUI server
+stratabench/web/             Bundled interface assets; no frontend build required
+stratabench/acquisition.py   Local/Git/release preparation and source settings
+stratabench/platforms.py     Linux/Windows process, lock and path adapters
+examples/custom-tasks.jsonl  Sample user questions
+datasets/                   Source lock and original-model reference catalog
+versions/                   Local source exports, engines, Python environments and caches (ignored)
+results/                    Local benchmark output (ignored)
+settings.json               Machine-specific preferences and registered versions (ignored)
 ```
 
-The public datasets have already been downloaded and verified. Benchmark runs can work offline. Adding an uncached Strata version needs internet access once.
-
-**Close other model servers before a managed run.** The runner uses one model and one request at a time, which suits your RTX 3080 10 GB and 64 GB RAM. It stops only the server and engine it starts. To test an already running server, use the attached-server command below instead.
-
-After a run, choose **5 — Open a report**. Results include an HTML comparison, CSV leaderboard, JSON summary, full questions, raw API responses, settings, cutoffs and errors. Choose **8** to compare saved runs made with identical questions/settings/scoring code. This lets you test one version today and another later.
-
-## Add any release without changing your installation
-
-Choose **2 — Add a Strata version**, enter a release tag, and wait for its one-time build. Or:
+Run the checks with:
 
 ```bash
-./bench add-version v0.1.44.1
+python -m unittest discover -s tests -v
 ```
 
-That tag is an **example**, not a recommendation. Pick the versions you want to investigate. The builder uses the existing CUDA compiler, CMake, C++ compiler and Git. It builds for your RTX 3080 (`sm_86`) with four compile jobs, downloads the version's pinned ggml source into this folder, and reuses your existing Python environment. It does not run Strata's installer or update script. The original Git repository is read for already available tags; missing tags are fetched into a separate repository here.
+The suite uses temporary files and local fake API servers; it does not download model weights or need a GPU/compiler. The optional cached-public-data check is skipped when the raw dataset cache is absent. GitHub Actions is configured for Linux and Windows with Python 3.11, 3.12 and 3.13. Native GPU/driver/Strata integration still depends on the selected engine package and machine.
 
-Each version gets **its own matching Python server**, engine, source commit, binary checksum and build log. It is a full server-and-engine version comparison. Keeping a new server while merely swapping an old binary could otherwise distort the comparison.
-
-Build progress is in `versions/TAG/build.log`. If a release requires changed dependencies or has an incompatible source layout, the build stops with the reason; nothing is installed automatically. You can specify an existing compatible Python environment and additional build flags:
+For interface syntax checks, Node is optional:
 
 ```bash
-./bench add-version v0.1.44.1 --jobs 4 --python /path/to/existing/python \
-  --cmake-arg=-DSTRATA_MMQ_KQUANTS=ON
+node --check stratabench/web/app.js
+node --check stratabench/web/setup.js
+node --check stratabench/web/outcomes.js
+node --check stratabench/web/helpers.js
 ```
 
-Build defaults use Release, CUDA architecture 86, native experts, K-quant MMQ and Q6K experts. These broadly match your installed build. CMake may ignore options unavailable in older versions. Build flags and ggml revisions are saved; compiler versions and engine defaults may still differ between releases. To compare custom builds with exactly your preferred flags, build them yourself in separate folders and import them:
+Local settings, model files, downloaded binaries, virtual environments, runtime credentials, logs and benchmark results are excluded from Git. Public source URLs and upstream references are retained for reproducibility. Nothing is published or uploaded by the GUI. Dataset downloads, Git source retrieval, release downloads and isolated Python package installation are the network operations used during preparation.
 
-```bash
-./bench snapshot --name my-build --source /path/to/Strata \
-  --exe /path/to/Strata/engine/strata --python /path/to/Strata/.venv/bin/python
-```
-
-Snapshotting copies the engine and server; it never replaces a previously registered version. Give changed builds a new label. Vision tests are not included; imported snapshots also copy an available image encoder, but a new text-only build does not compile one.
-
-## Presets
-
-| Preset | Questions per combination | Purpose |
-| --- | ---: | --- |
-| `smoke` | 7 | One generated check per group, across all five difficulties; validates the workflow. |
-| `quick` | 69 | A first screen. Scores are noisy at this size. |
-| `standard` | 276 | A more useful comparison of shortlisted combinations. |
-| `deep` | 648 | More questions, including all 30 AIME 2024 problems. |
-| `full` | 4,363 | All included public and generated cases; can take days on slower configs. |
-| `context` | 12 | Retrieval at three positions in each of four long-text sizes. |
-
-Public tasks: **GSM8K test**, eight **BIG-Bench Hard** tasks, **OpenBookQA test**, **AIME 2024**, and the **346 numeric/rational, text-only questions from MATH-500**. Generated tasks cover arithmetic, structured JSON, Python tracing, graph paths, subset counting, exact scheduling and a narrow Persian arithmetic check.
-
-Generated tasks change when you change `--seed`, and have independently calculated reference answers. Default seed is `20261119`. Sampling is deterministic and stratified by task group and difficulty. Public source revisions are pinned where available; all downloads are locked by SHA-256, including the AIME dataset viewer snapshot. Changed cached data is rejected. Seed changes both generated questions, sampled public questions and generation seeds, so use the same seed for every comparison.
-
-Difficulty labels for generated problems and BBH groups are approximate. MATH levels 1–5 map to easy through extreme; AIME supplies competition-level extreme problems. A high score on arithmetic alone says little about the hardest cases.
-
-These are **custom zero-shot diagnostic scores**, not official benchmark leaderboard numbers. Well-known public questions may have been in training data. Algorithm tasks test reasoning about programs and algorithms; the suite does not execute model-written programs, test software patches, use an LLM judge, measure creative writing, or test vision/tool use. Add examples from your real work for a more relevant decision.
-
-## Repeatable command-line runs
-
-```bash
-# Your current version with an existing config; no model/config edits.
-./bench run --versions v0.1.40.4 \
-  --configs strata-iq3_s_q4_262k_cpu_vision \
-  --profile quick --reasoning xhigh
-
-# After preparing the second version: all four combinations, sequentially.
-./bench run --versions v0.1.40.4 v0.1.44.1 \
-  --configs strata-iq3_s_q4_262k_cpu_vision strata-unsloth-ud-iq4_xs-v31 \
-  --profile standard --reasoning xhigh --repeats 3
-
-# Inspect the exact scope without loading a model.
-./bench run --configs strata-iq3_s_q4_262k_cpu_vision \
-  --profile standard --reasoning xhigh --dry-run
-
-# Only the extreme-difficulty questions from the deep preset.
-./bench run --configs strata-iq3_s_q4_262k_cpu_vision \
-  --profile deep --only extreme --reasoning xhigh
-
-# Extend long-context tests. Sizes are WORDS, not tokenizer tokens.
-./bench run --configs strata-iq3_s_q4_262k_cpu_vision \
-  --profile context --context-words 2000 8000 16000 32000 64000 \
-  --reasoning xhigh
-```
-
-The menu prints an equivalent command before each run. Configs can be full paths, names with or without `.json`, or `--configs all` for all discovered configs except symlink aliases. Some old configs may point to missing model files; these are reported as failures, not silently repaired. A config's GPU allocations may still fail on a particular release: that is useful compatibility evidence and is shown explicitly.
-
-CLI runs prompt for reasoning when omitted in an interactive terminal. Noninteractive use defaults to xhigh. To compare reasoning settings, run each setting separately. Saved reports with different reasoning settings are deliberately kept separate because the evaluation budget changed; view the reports side by side.
-
-## Thinking budgets and timing
-
-Default maximum answer tokens, **including thinking**, are 2,048 / 4,096 / 8,192 / 12,288 / 16,384 for easy / medium / hard / very hard / extreme. Set `--max-tokens 32768` to use a larger common limit. Some extremely hard problems will need it. A cutoff is counted as incorrect even if an early candidate answer was correct. Review cutoff rates before concluding that a model is weaker.
-
-Default sampling is temperature 0, top-p 1, positive seed; other sampling defaults from your config remain in effect and are recorded. Repeats use consecutive generation seeds. Temperature 0 can make repeats identical, and GPU arithmetic/adaptive expert caches can still make runs differ. For variability testing, use e.g. `--temperature 0.6 --repeats 3` consistently for all combinations. More distinct questions is usually more useful than identical greedy repeats.
-
-Per-request timeout is 30 minutes; startup timeout is 15 minutes. Change with `--timeout` / `--startup-timeout` (seconds). Timeout/disconnect/server errors stop that combination to avoid queuing requests behind a stuck generation; the runner proceeds to the next combination after shutting down its own server. HTTP request errors are saved without retries; three consecutive errors stop the combination. There is no automatic retry that could hide reliability problems.
-
-Reports show **end-to-end output throughput**, calculated from the server's completion-token usage and total request time. This includes prefill, and may include reasoning in token usage. It is not pure decode speed, time to first token, or energy usage. Initial model loading and the fixed unscored warm-up are saved separately and excluded from answer timing.
-
-## Reading the scores
-
-The **balanced score** is the mean accuracy across task groups; large datasets do not drown out smaller groups. The ordinary accuracy is also shown. Every planned answer is in the denominator. Errors, cutoffs and unanswered questions score zero. Incomplete combinations are excluded from ranking.
-
-The report shows per-difficulty and per-group accuracy, then compares the best observed complete combination with other complete combinations using a paired, stratified question-level bootstrap interval. Repeats of the same question stay together. This is uncertainty for this task mix, not proof of general superiority. Very small samples and all-identical outcomes can produce deceptively narrow intervals. Use quick runs to shortlist, then standard/deep and new seeds to check that a lead persists.
-
-The final answer is scored against a known answer, never hidden reasoning. Numeric integers, decimal values and simple rational fractions are compared exactly. The suite accepts a final JSON answer, a boxed math answer, a `Final answer:` line or a short standalone answer. It does not guess the answer by scanning arbitrary prose for numbers. Equivalent symbolic expressions outside supported numeric forms can be marked wrong; inspect extracted answers in the report when that matters. JSON formatting is recorded separately from content accuracy. Structured-data questions require exact field/value types.
-
-Each answer row includes the full request, raw API response, expected answer, extracted answer, latency, usage and failure flags. Metadata includes source config, runtime overrides, version/server/tokenizer/library hashes, model-file sizes and modification times, hardware, build settings, inherited engine environment variables and scoring-code hash. Huge GGUFs/packs are **not fully hashed or duplicated**; keep their contents fixed between runs. Resume rejects changed configs, tokenizer files, known input metadata, code, settings or inherited engine environment. Recorded weights metadata is not a cryptographic guarantee that every shard/pack stayed unchanged.
-
-## Stop, resume and compare later
-
-In the GUI, choose **Stop & save** in Activity, then **Resume** from Activity, Results, or the Test explorer. Unfinished runs are also discovered after an app restart or a crash. Resume uses the saved questions, reasoning, settings, and configurations; it never substitutes the current New benchmark selections. Correct, incorrect, and cutoff answers remain saved; pending evaluations and request errors are retried. The test counts and lists use the latest attempt for each question, combination, and repeat.
-
-From the terminal, press **Ctrl+C**. Completed answers are flushed to disk individually. Your original installation and any unrelated server are left alone.
-
-```bash
-./bench resume /absolute/path/to/results/RUN_FOLDER
-./bench report /absolute/path/to/results/RUN_FOLDER
-./bench compare /absolute/path/to/results/RUN_A /absolute/path/to/results/RUN_B
-```
-
-Resume uses the exact saved questions/options and validates the original target inputs. It keeps scored answers, retries transport/server-error answers, and restarts failed or unfinished combinations. Previous error attempts remain in the JSONL log; reports use the latest attempt per question/repeat. A resumed engine has fresh in-memory expert/prompt-cache state, so it is not guaranteed to reproduce the uninterrupted trajectory. That session's effective config and logs are saved in a new subfolder.
-
-Only runs with identical question sets, request settings, inherited engine environment and scoring code can be combined into a ranked report. Differences in hardware are recorded but not used to block comparison: compare accuracy across PCs carefully and compare timing on the same PC. If the same combination appears several times, a combined report uses the latest complete run, or the latest incomplete run if none is complete.
-
-## Test an already running server
-
-```bash
-./bench run --endpoint http://127.0.0.1:8080/v1 \
-  --label 'v0.1.40.4 / my-config' --profile quick --reasoning xhigh
-```
-
-This mode never starts or stops your server. The version/config label is user supplied and is marked as such; the runner cannot verify the underlying executable or config. Set `STRATABENCH_API_KEY` if that server needs a key. Use `--model NAME` if its API requires a particular model name. Leave that server idle while benchmarking. A timed-out attached-server request may continue generating; stop it yourself before resuming.
-
-## Add your own problems
-
-Copy `examples/custom-tasks.jsonl` and add questions with known answers. Each line needs a unique `id`, `group`, `difficulty`, `prompt`, `answer`, and `grader` (`numeric`, `choice`, `exact`, or `json`).
-
-```bash
-./bench run --configs strata-iq3_s_q4_262k_cpu_vision \
-  --tasks examples/custom-tasks.jsonl --reasoning xhigh
-```
-
-Use `./bench configs`, `./bench versions`, `./bench tasks --profile standard`, `./bench doctor`, or `./bench --help` for inspection. `doctor` only reads system state. Managed text tests disable the separate image encoder consistently while preserving the engine's `--vision` flag and other allocation settings. Use `--keep-vision` only with a prepared matching encoder if you want its memory overhead included. Working directories, logs, saved-profile outputs and temporary files are redirected into the result folder. Existing learned profiles are copied as initial state. Pack/model inputs remain shared read-only inputs to the engine; this is process isolation, not an operating-system write-protection boundary for arbitrary third-party engine code.
-
-## Validation
-
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-Tests cover answer extraction, exact numeric grading, no credit for hidden thinking/cutoffs, generated reference answers, config isolation, resumability, failure handling, incompatible-run rejection and report generation with a local fake API. A two-question **real GPU smoke test** on your copied v0.1.40.4 / IQ3_S 262K config also passed with xhigh reasoning. This verifies operation, not a meaningful ranking. Additional versions are prepared when you choose them; no cross-version winner has been measured yet.
+Strata, model weights, runtime packages and datasets retain their respective licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the licenses in prepared version sources.
