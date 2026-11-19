@@ -19,6 +19,12 @@ jobs:
       - name: Prepare coding integration runtime
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: docker pull python:3.12-slim
+      - name: Prepare small upstream evaluator checks
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: |
+          python -m stratabench prepare-suite ifeval
+          python -m stratabench prepare-suite bfcl
+          python -m stratabench prepare-suite writingbench
       - name: Run tests
         env:
           STRATABENCH_DOCKER_TEST_IMAGE: ${{ matrix.os == 'ubuntu-latest' && matrix.python == '3.12' && 'python:3.12-slim' || '' }}

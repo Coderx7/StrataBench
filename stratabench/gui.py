@@ -28,6 +28,7 @@ from .reference_scores import catalog as reference_catalog, reference_rows
 from .estimates import TimingHistory
 from .platforms import is_locked, process_options, stop_tree, windows, find_python
 from . import acquisition
+from . import standard_suites
 
 ASSETS = ROOT / 'stratabench' / 'web'
 INSTANCE = ROOT / '.gui-instance.json'
@@ -70,13 +71,14 @@ class AnswerIndex:
                     row = json.loads(line)
                     key = (row['case_id'], row['repeat'])
                     status = ('errors' if row.get('error') else 'cutoffs' if row.get('truncated')
+                              else 'rated' if row.get('correct') is None and row.get('standard_result',{}).get('suite')=='writingbench'
                               else 'passed' if row.get('correct') else 'incorrect')
                     previous = index['rows'].get(key, {})
                     index['rows'][key] = {'status': status, 'offset': offset, 'bytes': len(line),
                         'attempts': previous.get('attempts', 0)+1,
                         'elapsed_seconds': row.get('elapsed_seconds', 0),
                         'unparsed': bool(row.get('unparsed')) and status != 'errors',
-                        'json_format': bool(row.get('json_format')),'judge_error':row.get('style_judge',{}).get('status')=='error'}
+                        'json_format': bool(row.get('json_format')),'judge_error':row.get('style_judge',{}).get('status')=='error' or bool(row.get('standard_result',{}).get('judge_error'))}
                 except (ValueError, KeyError, TypeError):
                     raise ValueError('A saved answer is damaged. The original file has been preserved.') from None
                 index['pos'] = stream.tell()
@@ -126,7 +128,7 @@ def config_catalog():
     return out
 
 
-def run_command(data):
+def run_command(data, validate_judge=True):
     """Only supported structured options can become CLI arguments; there is no shell."""
     profile = data.get('profile', 'quick')
     if profile not in (*datasets.PROFILES, 'custom'):
@@ -154,9 +156,9 @@ def run_command(data):
     if data.get('max_tokens') not in ('', None, 'auto'):
         cmd += ['--max-tokens', str(number(data, 'max_tokens', 16384, 1, 262144))]
     levels = data.get('difficulties', datasets.DIFFICULTIES)
-    if not isinstance(levels, list) or not levels or any(x not in datasets.DIFFICULTIES for x in levels):
+    if profile not in standard_suites.SPECS and (not isinstance(levels, list) or not levels or any(x not in datasets.DIFFICULTIES for x in levels)):
         raise ValueError('Select at least one difficulty level.')
-    if profile != 'custom' and set(levels) != set(datasets.DIFFICULTIES):
+    if profile not in ('custom',*standard_suites.SPECS) and set(levels) != set(datasets.DIFFICULTIES):
         cmd += ['--only', ','.join(dict.fromkeys(levels))]
     if profile == 'context':
         words = str(data.get('context_words', '2000 8000 16000 32000')).replace(',', ' ').split()
@@ -170,13 +172,18 @@ def run_command(data):
         if not re.fullmatch(r'[a-f0-9]{32}\.jsonl', str(name)) or not (ROOT / 'user-tasks' / name).is_file():
             raise ValueError('Choose a custom question file first.')
         cmd += ['--tasks', str(ROOT / 'user-tasks' / name)]
-    if profile in ('tools','coding'):
-        cmd += ['--agent-turns',str(number(data,'agent_turns',8,1,32))]
+    if profile in standard_suites.SPECS:
+        if not standard_suites.enabled(profile,version_state):raise ValueError('Enable optional SWE-bench in Your setup first.')
+        if type(data.get('standard_full',False)) is not bool:raise ValueError('Choose a full split or a seeded sample.')
+        cmd += ['--standard-limit',str(0 if data.get('standard_full') else number(data,'standard_limit',50,1,100000))]
+        if profile=='swebench':cmd += ['--swe-test-timeout',str(number(data,'swe_test_timeout',900,30,3600))]
+    if profile in ('tools','coding','swebench'):
+        cmd += ['--agent-turns',str(number(data,'agent_turns',30 if profile=='swebench' else 8,1,64 if profile=='swebench' else 32))]
     if profile=='coding':
         image=str(data.get('coding_image','python:3.12-slim'))
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./:@-]{0,250}',image):raise ValueError('Invalid coding runtime image.')
         cmd += ['--coding-image',image]
-    if profile=='writing' and data.get('style_judge_enabled'):
+    if validate_judge and (profile=='writingbench' or profile=='writing' and data.get('style_judge_enabled')):
         endpoint=str(data.get('style_judge_endpoint','')).strip();model=str(data.get('style_judge_model','')).strip()
         parsed=urlsplit(endpoint)
         if parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or not model or len(model)>200:
@@ -221,6 +228,15 @@ class App:
                 count = None
             self.profiles.append({'id': key, 'name': name, 'description': description, 'count': count})
         self.public_ready = all(p['count'] is not None for p in self.profiles) and self.public_files_present()
+        self.refresh_standard_library()
+
+    def refresh_standard_library(self):
+        self.profiles=[p for p in self.profiles if p['id'] not in standard_suites.SPECS]
+        for item in standard_suites.catalog():
+            self.profile_counts[item['id']]={'unrated':item.get('installed_count') or item['count']}
+            if item['enabled']:
+                self.profiles.append({'id':item['id'],'name':item['name'],'description':item['description'],
+                    'count':item.get('installed_count'),'standard_suite':True,'ready':item['ready'],'optional':item.get('optional',False)})
 
     def public_files_present(self):
         return (ROOT / 'datasets/sources.lock.json').is_file() and all(
@@ -230,6 +246,7 @@ class App:
         if self.public_ready or not self.public_files_present():
             return
         for profile in self.profiles:
+            if profile['id'] in standard_suites.SPECS:continue
             cases = datasets.select(profile['id'])
             profile['count'] = len(cases)
             self.profile_counts[profile['id']] = Counter(c['difficulty'] for c in cases)
@@ -247,6 +264,7 @@ class App:
                 self.saved_cases[folder] = (stamp, read_json(case_path))
             cases = self.saved_cases[folder][1]
             counts = dict.fromkeys(('passed', 'incorrect', 'cutoffs', 'errors', 'pending', 'unparsed', 'judge_errors'), 0)
+            if any(c.get('score_only') for c in cases):counts['rated']=0
             entries, targets = [], []
             for ti, target in enumerate(manifest['targets']):
                 target_dir = (folder / target['id']).resolve()
@@ -270,11 +288,12 @@ class App:
                                 'preview': case.get('prompt', '')[:180], 'status': status,
                                 'attempts': row.get('attempts', 0), 'elapsed_seconds': row.get('elapsed_seconds'),
                                 'unparsed': row.get('unparsed', False),'judge_error':row.get('judge_error',False), '_case': case, '_row': row, '_path': path})
-            total = sum(counts[k] for k in ('passed', 'incorrect', 'cutoffs', 'errors', 'pending'))
+            total = sum(counts.get(k,0) for k in ('passed', 'incorrect', 'cutoffs', 'errors', 'pending','rated'))
             owned = bool(self.job and self.job.get('result_id') == folder.name and self.job['state'] in ('running', 'stopping'))
             locked = benchmark_locked()
             active = owned or (manifest['status'] == 'running' and locked)
             remaining = counts['pending'] + counts['errors']
+            if manifest['options'].get('profile')=='writingbench':remaining+=counts['judge_errors']
             result = {'id': folder.name, 'counts': counts, 'total': total,
                 'completed': total-counts['pending'], 'remaining': remaining, 'active': active,
                 'resumable': not active and (remaining > 0 or manifest['status'] != 'complete'),
@@ -323,6 +342,7 @@ class App:
                 judge_key_needed=bool(m['options'].get('style_judge_key_required') and not (self.judge_keys.get(judge) or os.environ.get('STRATABENCH_JUDGE_API_KEY')))
                 items.append({'id': path.parent.name, 'created': m['created'], 'status': m['status'],
                     'profile': m['options']['profile'], 'reasoning': m['options']['reasoning'],
+                    'standard_benchmark':m['options'].get('standard_benchmark'),
                     'repeats': m['options']['repeats'], 'questions': m['case_count'],
                     'combinations': len(m['targets']), 'targets': [t['label'] for t in m['targets']],
                     'best': complete[0] if complete else None,
@@ -335,6 +355,7 @@ class App:
 
     def state(self):
         s = settings()
+        self.refresh_standard_library()
         with contextlib.suppress(OSError, ValueError, RuntimeError):
             self.refresh_public_library()
         with self.lock:
@@ -360,6 +381,7 @@ class App:
         return {'versions': [{'name': name, 'kind': s['versions'][name]['kind'], 'created': s['versions'][name].get('created'),
                               'commit': s['versions'][name].get('git', '')[:12]} for name in ordered_names(s)],
                 'configs': configs, 'profiles': self.profiles, 'profile_counts': self.profile_counts,
+                'benchmark_library': standard_suites.catalog(s),
                 'hardware': self.hardware, 'runs': runs, 'job': job,
                 'references': refs, 'version_sort_mode': s.get('version_sort_mode','newest'),
                 'strata_root': s['strata_root'], 'default_reasoning': 'xhigh',
@@ -397,10 +419,10 @@ class App:
                     count = re.match(r'(\d+) questions × (\d+) repeat\(s\) × (\d+) combination', line)
                     if count:
                         job['total'] = int(count[1])*int(count[2])*int(count[3])
-                    progress = re.match(r'\s*(\d+)/(\d+)\s+(PASS|FAIL|ERROR)\s+(.+?)\s+\(([\d.]+)s\)', line)
+                    progress = re.match(r'\s*(\d+)/(\d+)\s+(PASS|FAIL|ERROR|RATED)\s+(.+?)\s+\(([\d.]+)s\)', line)
                     if progress:
                         job['completed'] += 1
-                        job[{'PASS': 'passed', 'FAIL': 'failed', 'ERROR': 'errors'}[progress[3]]] += 1
+                        if progress[3]!='RATED':job[{'PASS': 'passed', 'FAIL': 'failed', 'ERROR': 'errors'}[progress[3]]] += 1
                         job['stage'] = 'Evaluating questions'
                         job['last_question'] = progress[4]
                         job['last_result'] = progress[3]
@@ -417,6 +439,8 @@ class App:
             proc.wait()
         finally:
             proc.stdout.close()
+            if job['kind'] in ('run','resume') and job.get('result_id') and job['state']=='stopping':
+                with contextlib.suppress(OSError,ValueError,subprocess.SubprocessError):standard_suites.cleanup_run(job['result_id'])
             with self.lock:
                 stopped = job['state'] == 'stopping'
                 job['state'] = 'stopped' if stopped else 'complete' if proc.returncode == 0 else 'failed'
@@ -493,15 +517,26 @@ class App:
             return {'ok': True, 'order': ordered_names(state)}
         if route == '/api/estimate':
             return self.estimate(data)
+        if route=='/api/optional-swebench':
+            if type(data.get('enabled')) is not bool:raise ValueError('Choose whether to enable SWE-bench.')
+            with local_lock('.prepare.lock'):
+                config=settings();config['optional_swebench']=data['enabled'];save_settings(config)
+            return {'ok':True,'enabled':data['enabled']}
+        if route=='/api/prepare-suite':
+            suite=data.get('suite')
+            if suite not in standard_suites.SPECS:raise ValueError('Choose a standard suite.')
+            if not standard_suites.enabled(suite):raise ValueError('Enable optional SWE-bench before preparing it.')
+            return self.start('prepare-suite',['prepare-suite',suite],'Preparing '+standard_suites.SPECS[suite]['name'])
         if route == '/api/run':
             command=run_command(data)
+            if data.get('profile') in standard_suites.SPECS:standard_suites.verify(data['profile'])
             overrides={}
-            if data.get('profile')=='writing' and data.get('style_judge_enabled') and data.get('style_judge_key'):
+            if data.get('profile') in ('writing','writingbench') and (data.get('style_judge_enabled') or data.get('profile')=='writingbench') and data.get('style_judge_key'):
                 key=data['style_judge_key']
                 if not isinstance(key,str) or len(key)>8192:raise ValueError('Invalid judge API key.')
                 self.judge_keys[(str(data['style_judge_endpoint']).strip().rstrip('/'),str(data['style_judge_model']).strip())]=key
                 overrides['STRATABENCH_JUDGE_API_KEY']=key
-            elif data.get('profile')=='writing' and data.get('style_judge_enabled'):
+            elif data.get('profile') in ('writing','writingbench') and (data.get('style_judge_enabled') or data.get('profile')=='writingbench'):
                 key=self.judge_keys.get((str(data.get('style_judge_endpoint','')).strip().rstrip('/'),str(data.get('style_judge_model','')).strip()))
                 if key:overrides['STRATABENCH_JUDGE_API_KEY']=key
             return self.start('run', command, 'Benchmark in progress',env_overrides=overrides)
@@ -577,7 +612,7 @@ class App:
 
     def estimate(self, data):
         # Reuse run validation, but this endpoint never starts an engine or downloads data.
-        run_command({**data,'style_judge_enabled':False})
+        run_command({**data,'style_judge_enabled':False},validate_judge=False)
         if data.get('all_suites'):
             result = self.estimate({**data,'all_suites':False})
             result['suites'] = {}
@@ -607,7 +642,9 @@ class App:
             counts = self.profile_counts.get(profile)
             if counts is None:
                 raise ValueError('Download this suite before estimating its duration.')
-        counts = {k:v for k,v in counts.items() if k in difficulties}
+        counts = {k:v for k,v in counts.items() if k in difficulties or profile in standard_suites.SPECS}
+        if profile in standard_suites.SPECS and not data.get('standard_full'):
+            counts={'unrated':min(sum(counts.values()),int(data.get('standard_limit') or 50))}
         if not sum(counts.values()):
             raise ValueError('No questions in this suite match the selected difficulty levels.')
         with self.lock:

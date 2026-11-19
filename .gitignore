@@ -5,6 +5,7 @@ versions/
 results/
 .*.lock
 datasets/raw/
+benchmarks/
 .gui-instance.json
 .gui.log
 user-configs/

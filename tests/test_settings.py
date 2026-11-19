@@ -59,6 +59,29 @@ class SettingsTests(unittest.TestCase):
         common.write_json(self.state_file, {'versions':{}, 'strata_source':acquisition.preferences({'versions':{}})})
         self.assertTrue(self.request('/api/state')['setup']['show_welcome'])
 
+    def test_optional_swebench_is_off_by_default_and_toggle_never_downloads(self):
+        state=self.request('/api/state')
+        self.assertFalse(next(s for s in state['benchmark_library'] if s['id']=='swebench')['enabled'])
+        self.assertNotIn('swebench',[s['id'] for s in state['profiles']])
+        with mock.patch.object(self.app,'start') as start,mock.patch.object(gui.standard_suites,'download') as download:
+            self.request('/api/optional-swebench',{'enabled':True})
+            self.assertTrue(common.settings()['optional_swebench'])
+            self.assertIn('swebench',[s['id'] for s in gui.App().state()['profiles']])
+            self.request('/api/optional-swebench',{'enabled':False})
+            self.assertFalse(common.settings()['optional_swebench'])
+            start.assert_not_called();download.assert_not_called()
+
+    def test_optional_swebench_prepare_requires_opt_in_and_csrf(self):
+        with mock.patch.object(self.app,'start') as start:
+            for payload,kwargs in (({'enabled':True},{'auth':False}),({'enabled':True},{'csrf':False}),({'enabled':'yes'},{})):
+                with self.assertRaises(urllib.error.HTTPError):self.request('/api/optional-swebench',payload,**kwargs)
+            with self.assertRaises(urllib.error.HTTPError):self.request('/api/prepare-suite',{'suite':'swebench'})
+            start.assert_not_called()
+            self.request('/api/optional-swebench',{'enabled':True})
+            start.return_value={'ok':True}
+            self.request('/api/prepare-suite',{'suite':'swebench'})
+            self.assertEqual(start.call_args.args[1],['prepare-suite','swebench'])
+
     def test_welcome_acknowledgment_survives_app_restart_without_marking_setup_ready(self):
         self.request('/api/setup-welcome', {})
         restarted = gui.App().state()['setup']

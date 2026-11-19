@@ -105,7 +105,7 @@ def doctor():
     return hw['gpu']['ok'] and check['ok']
 
 
-def cases_for(profile, seed, only=None, context_words=None, task_file=None):
+def cases_for(profile, seed, only=None, context_words=None, task_file=None, standard_limit=50):
     if task_file:
         cases = [json.loads(line) for line in Path(task_file).read_text(encoding='utf-8-sig').splitlines() if line.strip()]
         if not cases or len({x['id'] for x in cases}) != len(cases):
@@ -121,7 +121,7 @@ def cases_for(profile, seed, only=None, context_words=None, task_file=None):
             datasets.load_public()
         except RuntimeError:
             datasets.prepare_public()
-    return datasets.select(profile, seed, only, context_words)
+    return datasets.select(profile, seed, only, context_words, standard_limit)
 
 
 def show_plan(cases, targets, options):
@@ -150,9 +150,19 @@ def execute(args):
         raise ValueError('Repeats and timeouts must be positive; temperature must be nonnegative.')
     if args.max_tokens is not None and args.max_tokens < 1:
         raise ValueError('The answer token limit must be positive.')
-    cases = cases_for(args.profile, args.seed, args.only, args.context_words, args.tasks)
+    if not 0<=args.standard_limit<=100000 or not 30<=args.swe_test_timeout<=3600:raise ValueError('Invalid standard sample size or SWE-bench test timeout.')
+    if args.tasks and args.profile in datasets.STANDARD_SPECS:raise ValueError('Imported questions cannot be labelled as a standard benchmark split.')
+    cases = cases_for(args.profile, args.seed, args.only, args.context_words, args.tasks, args.standard_limit)
+    if args.profile in datasets.STANDARD_SPECS:
+        from .standard_suites import provenance
+        options['standard_benchmark']=provenance(args.profile,cases,args.standard_limit)
+        options['standard_limit']=args.standard_limit
+        if args.profile=='swebench':
+            if args.dry_run:
+                print('SWE-bench dry run: no images are pulled and no task containers are started.')
+            options['swe_test_timeout']=args.swe_test_timeout
     if any(c.get('requires_vision') for c in cases):options['keep_vision']=True
-    if args.profile in ('tools','coding'):options['agent_turns']=args.agent_turns
+    if args.profile in ('tools','coding','swebench'):options['agent_turns']=args.agent_turns
     if args.profile=='coding':
         from .coding_runtime import image_id
         options['coding_image_id']=image_id(args.coding_image)
@@ -160,9 +170,10 @@ def execute(args):
     if args.style_judge_endpoint:
         from urllib.parse import urlsplit
         parsed=urlsplit(args.style_judge_endpoint)
-        if args.profile!='writing' or parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or not args.style_judge_model:
+        if args.profile not in ('writing','writingbench') or parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or not args.style_judge_model:
             raise ValueError('The optional writing judge needs a valid endpoint and model, and the Writing suite.')
         options.update(style_judge_endpoint=args.style_judge_endpoint.rstrip('/'),style_judge_model=args.style_judge_model,style_judge_key_required=bool(os.environ.get('STRATABENCH_JUDGE_API_KEY')))
+    if args.profile=='writingbench' and not args.style_judge_endpoint:raise ValueError('WritingBench requires a configured writing judge endpoint and model.')
     if args.endpoint:
         from urllib.parse import urlsplit
         if urlsplit(args.endpoint).scheme not in ('http', 'https'):
@@ -189,6 +200,9 @@ def execute(args):
     if args.dry_run:
         return
     with local_lock('.run.lock'):
+        if args.profile=='swebench':
+            from .standard_suites import worker
+            options['swe_images']=worker('swebench','images',{'cases':cases},timeout=86400)
         return run(cases, targets, options, args.resume)
 
 
@@ -199,6 +213,11 @@ def resume(folder):
     if manifest['options'].get('coding_image_id'):
         from .coding_runtime import image_id
         image_id(manifest['options']['coding_image_id'])
+    if manifest['options'].get('standard_benchmark'):
+        from .standard_suites import verify,worker
+        saved=manifest['options']['standard_benchmark'];current=verify(saved['suite'])
+        if current['files']!=saved['source_files']:raise RuntimeError('Standard benchmark source or evaluator environment changed; start a new run.')
+        if manifest['options'].get('swe_images'):worker('swebench','verify_images',{'images':manifest['options']['swe_images']})
     for target in targets:
         if not target.get('endpoint'):
             new = make_targets([target['version']], [target['config']])[0]
@@ -295,6 +314,8 @@ def parser():
     sub.add_parser('versions', help='List prepared versions')
     sub.add_parser('doctor', help='Read-only check of GPU, Python and build tools')
     sub.add_parser('datasets', help='Download/cache public datasets once')
+    q=sub.add_parser('prepare-suite',help='Explicitly prepare a standard benchmark and its isolated evaluator')
+    q.add_argument('suite',choices=datasets.STANDARD_SPECS)
     q = sub.add_parser('add-version', help='Prepare a version using the configured Strata source')
     q.add_argument('tag')
     q.add_argument('--jobs', type=int)
@@ -335,11 +356,13 @@ def parser():
     q.add_argument('--timeout', type=float, default=1800, help='Per-request timeout in seconds')
     q.add_argument('--startup-timeout', type=float, default=900)
     q.add_argument('--port', type=int, default=18765, help='Dedicated loopback benchmark port')
-    q.add_argument('--agent-turns', type=int, choices=range(1,33), default=8, help='Maximum model turns per tool/coding task')
+    q.add_argument('--agent-turns', type=int, choices=range(1,65), default=8, help='Maximum model turns per tool/coding task')
     q.add_argument('--coding-image', default='python:3.12-slim')
+    q.add_argument('--standard-limit',type=int,default=50,help='Seeded standard-suite sample size; 0 uses the complete configured split')
+    q.add_argument('--swe-test-timeout',type=int,default=900,help='SWE-bench acceptance-test timeout per issue in seconds')
     q.add_argument('--style-judge-endpoint')
     q.add_argument('--style-judge-model')
-    q.add_argument('--keep-vision', action='store_true', help='Also load the image encoder (suite remains text-only)')
+    q.add_argument('--keep-vision', action='store_true', help='Also load the image encoder for suites without image inputs')
     q.add_argument('--model', default='strata', help='API model name (Strata accepts arbitrary names)')
     q.add_argument('--only', help='Comma-separated task groups and/or difficulty levels')
     q.add_argument('--context-words', type=int, nargs='+', help='Context profile sizes in words, not tokens')
@@ -377,6 +400,9 @@ def main():
         elif args.command == 'prepare-coding':
             from .coding_runtime import prepare
             print('Coding runtime ready: '+prepare(args.image))
+        elif args.command=='prepare-suite':
+            from .standard_suites import prepare
+            with local_lock('.prepare.lock'):prepare(args.suite)
         elif args.command == 'source':
             from .acquisition import configure, preferences
             data = {k:v for k,v in vars(args).items() if k != 'command' and v is not None}

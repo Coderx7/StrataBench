@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import contextlib
+import copy
+import hashlib
 import http.client
 import json
 import os
@@ -20,7 +22,7 @@ SYSTEM = ('Solve the task accurately. You may reason before answering. End with 
           'question use only the option label; for a numeric question use a number or a numeric '
           'string; for a structured answer use the requested object or list as the answer value. '
           'Do not include an explanation inside the answer value.')
-BUDGETS = {'easy': 2048, 'medium': 4096, 'hard': 8192, 'very_hard': 12288, 'extreme': 16384}
+BUDGETS = {'easy': 2048, 'medium': 4096, 'hard': 8192, 'very_hard': 12288, 'extreme': 16384, 'unrated':8192}
 
 
 def payload(case, options, repeat=0):
@@ -31,6 +33,10 @@ def payload(case, options, repeat=0):
             'max_tokens': options.get('max_tokens') or BUDGETS[case['difficulty']]}
     if case.get('image'):
         body['messages'][1]['content']=[{'type':'text','text':case['prompt']},{'type':'image_url','image_url':{'url':case['image']}}]
+    if case.get('images'):
+        body['messages'][1]['content']=[{'type':'text','text':case['prompt']}]+[{'type':'image_url','image_url':{'url':image}} for image in case['images']]
+    if case.get('standard_suite') and case.get('system') is None:
+        body['messages']=[m for m in body['messages'] if m['role']!='system']
     effort = options.get('reasoning', 'xhigh')
     if effort != 'default':
         body['reasoning_effort'] = 'none' if effort == 'off' else effort
@@ -152,6 +158,20 @@ def append_row(path, row):
         os.fsync(f.fileno())
 
 
+def stored_request(case, request):
+    """Keep large standard images once in cases.json, with exact per-request references."""
+    if case.get('standard_suite')!='mmmu':return request
+    saved=copy.deepcopy(request);index=0
+    for message in saved.get('messages',[]):
+        if not isinstance(message.get('content'),list):continue
+        for part in message['content']:
+            if part.get('type')=='image_url':
+                url=part['image_url']['url']
+                part['image_url']={'url':'case-image:'+str(index),'data_url_sha256':hashlib.sha256(url.encode()).hexdigest()}
+                index+=1
+    return saved
+
+
 def protocol_hash():
     return digest({p.name: file_hash(p) for p in (ROOT / 'stratabench').glob('*.py') if p.name != 'gui.py'})
 
@@ -227,7 +247,7 @@ def run(cases, targets, options, resume=None):
             rows = load_rows(rows_path)
             latest = {(x['case_id'], x['repeat']): x for x in rows}
             # Transport/server failures can be retried on resume; scored wrong/cutoff answers are kept.
-            done = {key for key, row in latest.items() if not row.get('error')}
+            done = {key for key, row in latest.items() if not row.get('error') and not row.get('standard_result',{}).get('judge_error')}
             total = len(cases)*options['repeats']
             if len(done) == total:
                 manifest['target_status'][target['id']] = {'state': 'complete'}
@@ -263,7 +283,12 @@ def run(cases, targets, options, resume=None):
                                    'group': c['group'], 'expected': c['answer'], 'request': body, 'at': stamp()}
                             fatal = False
                             try:
-                                if c.get('protocol') in ('tools','coding'):
+                                if c.get('standard_suite'):
+                                    from .standard_runner import evaluate
+                                    saved=latest.get((c['id'],repeat))
+                                    saved=saved if saved and saved.get('standard_result',{}).get('judge_error') and not saved.get('error') else None
+                                    row.update(evaluate(c,body,endpoint,options,api_key,saved=saved,run_id=folder.name))
+                                elif c.get('protocol') in ('tools','coding'):
                                     from .capability_runner import run_agent
                                     row.update(run_agent(c,body,endpoint,options,api_key))
                                 else:
@@ -273,7 +298,7 @@ def run(cases, targets, options, resume=None):
                                     from .capability_runner import judge_writing
                                     row['style_judge']=judge_writing(c,row['content'],options,os.environ.get('STRATABENCH_JUDGE_API_KEY'))
                                 errors = 0
-                            except (OSError, ValueError, http.client.HTTPException) as e:
+                            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, http.client.HTTPException) as e:
                                 detail = str(e)
                                 if isinstance(e, urllib.error.HTTPError):
                                     detail += ': ' + e.read(4096).decode(errors='replace')
@@ -282,13 +307,18 @@ def run(cases, targets, options, resume=None):
                                 errors += 1
                                 # A disconnected/timeout request may still be generating. Do not queue another one.
                                 fatal = not isinstance(e, urllib.error.HTTPError) or e.code >= 500
+                            if c.get('standard_suite')=='mmmu':
+                                row['request']=stored_request(c,row['request'])
+                                row['request_image_storage']='case-image:N references images[N] for this case in cases.json; hashes cover the original data URL.'
                             append_row(rows_path, row)
+                            latest[(c['id'],repeat)]=row
                             done.add((c['id'], repeat))
-                            label = 'ERROR' if row.get('error') else 'PASS' if row['correct'] else 'FAIL'
+                            label = 'ERROR' if row.get('error') else 'RATED' if row['correct'] is None else 'PASS' if row['correct'] else 'FAIL'
                             print(f'  {len(done)}/{total} {label:5s} {c["id"]} ({row["elapsed_seconds"]:.1f}s)', flush=True)
                             if fatal or errors >= 3:
                                 raise RuntimeError('Stopping this combination after a server failure; saved answers can be resumed.')
-                    status.update(state='complete', finished=stamp())
+                    judge_pending=any(r.get('standard_result',{}).get('judge_error') for r in latest.values())
+                    status.update(state='incomplete' if judge_pending else 'complete', finished=stamp())
             except (OSError, ValueError, RuntimeError, http.client.HTTPException) as e:
                 status.update(state='failed', error=str(e), finished=stamp())
                 print('  Failed: ' + str(e), flush=True)
@@ -301,6 +331,9 @@ def run(cases, targets, options, resume=None):
         manifest['status'] = 'interrupted'
         print('\nStopped. Completed answers are saved. Resume from the menu or with --resume.', flush=True)
     finally:
+        if options['profile']=='swebench':
+            from .standard_suites import cleanup_run
+            with contextlib.suppress(OSError,subprocess.SubprocessError):cleanup_run(folder.name)
         manifest['updated'] = stamp()
         write_json(folder / 'manifest.json', manifest)
         from .report import generate

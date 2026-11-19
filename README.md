@@ -167,6 +167,43 @@ The runner evaluates one version/config combination and one question at a time. 
 | Tool use | 15 | Multi-step customer/order/tax workflows with controlled function calls. |
 | Agentic coding | 10 | Small Python repair projects with file tools, visible tests and hidden acceptance tests. |
 
+### Standard benchmark library
+
+Open **Benchmark library** in the sidebar. Choose **Prepare suite** once, then **Use this suite**. Preparation downloads the pinned data and upstream scoring code and creates a private Python environment under `benchmarks/`. It does not install Python packages globally or change Strata/model files. The original diagnostic suites remain available for quick checks. **Full suite** continues to mean the existing accuracy task collection; it does not silently add standard suites or SWE-bench.
+
+| Standard suite | Full configured coverage | Reported score |
+| --- | --- | --- |
+| [IFEval](https://github.com/google-research/google-research/tree/master/instruction_following_eval) | Original 541 prompts | Official prompt/instruction strict and loose metrics; prompt strict is primary. |
+| [BFCL](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard) | 1,000 v4 cases across `simple_python`, `multiple`, `parallel`, `parallel_multiple` | Official Python AST checker accuracy for these categories. This integration does not report BFCL overall, Java/JavaScript, live, multi-turn, memory or web-search scores. |
+| [MMMU](https://github.com/MMMU-Benchmark/MMMU) | 900 validation questions across all 30 subjects | Accuracy using the upstream multiple-choice/open-answer parser and checker. Original images are sent to the selected vision model. |
+| [WritingBench](https://github.com/X-PLUG/WritingBench) | 1,000 prompts with their published per-question criteria | Mean rubric quality score on a 100-point scale, using the upstream judge prompts. Requires a separately configured judge. |
+| [SWE-bench Lite](https://www.swebench.com/lite.html), optional | 300 test issues | Percentage resolved, using the pinned official test specification and acceptance-test grader with the StrataBench terminal agent. |
+
+The default is a **seeded sample of 50 questions**. Change the sample size or select **Run the full configured split** in New benchmark. The selection is identical for every version/config in a comparison. Reports state **seeded sample** or **full configured split**, the selected/full counts, source and dataset revisions, environment package snapshot and run settings. Standard suites retain their original categories and do not receive invented Easy–Extreme labels. MMMU-Pro is not included in this integration.
+
+The runner uses a StrataBench generation adapter with the pinned upstream scoring functions. It preserves IFEval prompts, supplies BFCL functions through the native tool-call API, and sends MMMU questions/options and their images through the multimodal API. Generation settings, system prompts, parser seeds, tool formats, budgets, sampling and agent scaffolding can differ from a publisher’s leaderboard setup. **Full coverage is not a claim of exact leaderboard replication.** Compare published numbers only when the evaluation protocol and model precision also match. Existing published model references remain unavailable wherever a verified matching reference is absent.
+
+WritingBench uses its own published 1–10 criterion rubrics, rather than the original diagnostic suite’s four-dimension 1–5 judge. It normally makes five judge calls per response. The writing brief, response and criteria are sent to the judge endpoint you configure; the API key stays in memory. A successful rating is a **rated response**, with no arbitrary correct/incorrect threshold. Reports show quality, scored coverage and judge errors separately. Incomplete judge coverage is excluded from rankings. Resuming a judge failure reuses the saved model response and retries its judging; it does not generate a different writing sample. Keep the same judge/model/rubric across comparisons.
+
+Standard metrics appear in the report and in `standard-metrics.json` / `standard-metrics.csv`, alongside the existing saved answers and inspection views. IFEval instruction-level metrics count individual instructions across the split. Standard accuracy scores include missing/error/cutoff questions in the denominator. Writing quality is the mean of successfully judged responses and always includes its coverage. Time estimates include broad allowances for multi-turn work and judge calls; downloads, package installation and SWE image preparation are excluded.
+
+MMMU images are stored once per selected question in the run’s `cases.json`. Saved request records use `case-image:N` references and data-URL hashes instead of repeating the image bytes for every version/config/repeat. Actual API requests still contain the original image data, and the inspector reads images from the saved cases. Full vision splits can still produce large result folders.
+
+### Optional SWE-bench: off by default
+
+SWE-bench is **not included in normal preparation, dataset downloads, or suite choices**. To use it:
+
+1. Open **Benchmark library**, then turn on **Include optional SWE-bench in my suite choices**. This only reveals the option and saves your preference; it downloads nothing.
+2. Choose **Prepare SWE-bench dataset & evaluator**. This downloads the small issue dataset and the isolated official evaluator environment, not the large issue images.
+3. Choose **Configure SWE-bench run**, select versions/configs, and start with a small sample. Set the model-turn budget and acceptance-test timeout as needed. The GUI defaults to 30 model turns when selecting this suite; the command-line default remains 8 unless overridden.
+4. Starting the run explicitly prepares Docker images for the selected issues **before loading the model**. Each resolved immutable image ID is recorded and required on resume. The app uses upstream prebuilt x86-64 Linux images; it does not silently build unavailable images from source.
+
+Plan for **at least 120 GB free in Docker storage**, following the [official harness requirements](https://github.com/SWE-bench/SWE-bench/blob/main/docs/reference/harness.md). Your Docker data drive can differ from the app drive. Full runs can take hours or days, and images can consume substantial bandwidth and disk. A notice appears before the preparation/run controls. The app never prunes unrelated Docker images or volumes. Disabling the option hides the suite without deleting its downloads or saved results; manage retained images through Docker Desktop or your usual Docker tools.
+
+Docker must be running in **Linux-container mode** on Linux or Windows; Windows uses Docker Desktop’s Linux containers. The terminal agent operates in an issue-specific container with no network or host-folder/Docker-socket mounts, dropped capabilities, 2 CPUs, 4 GB RAM and a 256-process limit. Commands have 120-second limits and bounded output. The agent edits repository files and runs visible tests inside that container. Its patch is then tested in a **fresh container**, using the official hidden test patch, test commands and resolution grader. The gold patch and hidden tests are not included in the model prompt. Acceptance tests default to a 900-second timeout, configurable up to 3,600 seconds. This is the `stratabench-terminal-v1` agent, not a reproduction of another agent’s published SWE-bench result.
+
+If image preparation fails or storage is insufficient, the run stops with saved diagnostics. Resume requires the original image IDs to remain available. There is no host-execution fallback. Only the app’s own labelled task containers are cleaned up.
+
 Default counts depend on the pinned dataset selection and difficulty filters. Long-context sizes are **words**, not tokens, and must fit the selected model configuration. The app shows a time range per configuration and for the whole matrix. Unmeasured estimates use an RTX 3080 / 64 GB planning baseline; other hardware can differ substantially. Observed timings for the same version/config/reasoning/budget improve estimates. Reasoning can make hard questions take much longer than easy ones.
 
 Included public tasks are GSM8K, OpenBookQA, eight BIG-Bench Hard tasks, the numeric/text-only subset of MATH-500, and AIME 2024. Generated tasks cover arithmetic, JSON transformations, Python tracing, graphs, combinatorics, exact scheduling, Persian arithmetic and long-context retrieval. Difficulty labels are heuristic.
@@ -284,6 +321,16 @@ python -m stratabench compare "/path/to/results/RUN_A" "/path/to/results/RUN_B"
 For Windows paths, use values such as `"C:\Models\Strata"`, `"C:\Python312\python.exe"` and `"C:\Models\venv\Scripts\python.exe"`. The commands themselves are the same; no Bash environment is required.
 
 Advanced runs accept `--max-tokens`, `--timeout`, `--startup-timeout`, `--temperature`, `--seed`, `--only`, `--context-words`, `--tasks`, `--port` and `--dry-run`. Capability suites also support `--agent-turns`, `--coding-image`, `--style-judge-endpoint` and `--style-judge-model`. `python -m stratabench run --help` lists them. Source preparation also accepts `--jobs`, `--python` and repeated `--cmake-arg=-DNAME=value` options.
+
+Standard-suite commands are optional; the GUI provides the same controls:
+
+```sh
+python -m stratabench prepare-suite ifeval
+python -m stratabench run --profile ifeval --standard-limit 50 --versions VERSION --configs CONFIG.json
+python -m stratabench run --profile ifeval --standard-limit 0 --versions VERSION --configs CONFIG.json
+```
+
+`--standard-limit 0` selects the complete configured split. `--swe-test-timeout` sets the optional SWE acceptance-test limit; `--agent-turns` controls its agent budget. SWE preparation also requires the explicit `optional_swebench: true` setting written by the GUI. Difficulty filters do not apply to standard-suite profiles. A dry run never pulls SWE issue images.
 
 To attach to a server you manage yourself:
 

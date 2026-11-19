@@ -11,6 +11,7 @@ import io
 
 from .common import ROOT, digest, file_hash, read_json, stamp, write_json
 from .grading import numeric, extract_answer
+from .standard_suites import SPECS as STANDARD_SPECS
 
 DATA = ROOT / 'datasets'
 BBH_REV = '9ee07bd481feebf959a6b59d61ea57bdcf30964d'
@@ -34,6 +35,7 @@ PROFILES = {
     'full': {'per_bucket': 100000, 'public': True},
     'context': {'per_bucket': 100000, 'public': False},
     **{name:{'per_bucket':100000,'public':False} for name in ('writing','vision','tools','coding')},
+    **{name:{'per_bucket':100000,'public':False,'standard_suite':True} for name in STANDARD_SPECS},
 }
 
 
@@ -247,8 +249,12 @@ def context_cases(seed, words=(2000, 8000, 16000, 32000)):
     return out
 
 
-def select(profile, seed=20261119, only=None, context_words=None):
+def select(profile, seed=20261119, only=None, context_words=None, standard_limit=50):
     spec = PROFILES[profile]
+    if profile in STANDARD_SPECS:
+        from .standard_suites import select as select_standard
+        if only:raise ValueError('Standard suites use their original categories. Difficulty filters do not apply.')
+        return select_standard(profile,seed,standard_limit)
     if profile in ('writing','vision','tools','coding'):
         from .capability_cases import select as capability_cases
         cases = capability_cases(profile,seed)

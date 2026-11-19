@@ -1,6 +1,7 @@
 {
   "strata_root": "",
   "default_reasoning": "xhigh",
+  "optional_swebench": false,
   "versions": {},
   "strata_source": {
     "method": "release",

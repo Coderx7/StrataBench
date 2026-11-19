@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from unittest import mock
 
-from stratabench import gui
+from stratabench import gui, common
 
 
 class GuiTests(unittest.TestCase):
@@ -20,7 +20,7 @@ class GuiTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         (self.root / 'results').mkdir()
-        self.patches = [mock.patch.object(gui, 'ROOT', self.root),
+        self.patches = [mock.patch.object(gui, 'ROOT', self.root),mock.patch.object(common,'ROOT',self.root),
             mock.patch.object(gui, 'hardware', return_value={'gpu': {'ok': True, 'output': 'Test GPU'}}),
             mock.patch.object(gui, 'settings', return_value={'versions': {'v-test': {'kind': 'snapshot'}}, 'strata_root': str(self.root)}),
             mock.patch.object(gui, 'config_catalog', return_value=[{'id': '/config.json','name':'test-iq3_s','model':'iq3_s','context':'262144'}]),
@@ -162,7 +162,7 @@ if(!calls.includes('/api/state'))throw Error('Application startup never reached 
         with mock.patch.object(self.app,'public_files_present',return_value=True):
             self.app.refresh_public_library()
         self.assertTrue(self.app.public_ready)
-        self.assertTrue(all(p['count']==1 for p in self.app.profiles))
+        self.assertTrue(all(p['count']==1 for p in self.app.profiles if not p.get('standard_suite')))
 
     def test_judge_key_is_kept_out_of_commands_and_public_state(self):
         data={'profile':'writing','versions':['v-test'],'configs':['/config.json'],
@@ -189,6 +189,24 @@ if(!calls.includes('/api/state'))throw Error('Application startup never reached 
         self.assertEqual(estimate['profile'],'writing')
         self.assertEqual(estimate['combinations'],1)
         self.assertGreater(estimate['upper_seconds'],estimate['lower_seconds'])
+
+    def test_standard_sampling_ignores_hidden_difficulty_filters(self):
+        base={'profile':'ifeval','versions':['v-test'],'configs':['/config.json'],'difficulties':[],'standard_limit':12}
+        sample=gui.run_command(base)
+        self.assertEqual(sample[sample.index('--standard-limit')+1],'12');self.assertNotIn('--only',sample)
+        full=gui.run_command({**base,'standard_full':True})
+        self.assertEqual(full[full.index('--standard-limit')+1],'0')
+        for extra in ({'standard_limit':-1},{'standard_full':'yes'}):
+            with self.assertRaises(ValueError):gui.run_command({**base,**extra})
+
+    def test_standard_writing_requires_judge_and_keeps_its_key_private(self):
+        base={'profile':'writingbench','versions':['v-test'],'configs':['/config.json']}
+        with self.assertRaises(ValueError):gui.run_command(base)
+        data={**base,'style_judge_endpoint':'http://judge/v1','style_judge_model':'fixed','style_judge_key':'private-key'}
+        with mock.patch.object(gui.standard_suites,'verify'),mock.patch.object(self.app,'start',return_value={'ok':True}) as start:
+            self.request('/api/run',data).close()
+            self.assertNotIn('private-key',str(start.call_args.args))
+            self.assertEqual(start.call_args.kwargs['env_overrides']['STRATABENCH_JUDGE_API_KEY'],'private-key')
 
     def test_unknown_version_and_config_rejected(self):
         with mock.patch.object(self.app, 'start') as start:

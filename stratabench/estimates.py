@@ -41,11 +41,14 @@ def rates(config):
 
 def timing_scope(options):
     profile=options.get('profile')
-    if profile not in ('writing','vision','tools','coding'):return ''
+    if profile not in ('writing','vision','tools','coding','ifeval','bfcl','mmmu','writingbench','swebench'):return ''
     judge=bool(options.get('style_judge_enabled',bool(options.get('style_judge_endpoint'))))
-    return digest({'profile':profile,'turns':int(options.get('agent_turns',8)) if profile in ('tools','coding') else None,
+    from .standard_suites import SPECS
+    revision=options.get('standard_benchmark',{}).get('revision') or SPECS.get(profile,{}).get('revision')
+    return digest({'profile':profile,'turns':int(options.get('agent_turns',8)) if profile in ('tools','coding','swebench') else None,
         'coding_image':options.get('coding_image','python:3.12-slim') if profile=='coding' else None,
-        'judge':(options.get('style_judge_endpoint'),options.get('style_judge_model')) if judge and profile=='writing' else None})
+        'judge':(options.get('style_judge_endpoint'),options.get('style_judge_model')) if (judge and profile=='writing' or profile=='writingbench') else None,
+        'standard_revision':revision})
 
 
 class TimingHistory:
@@ -121,15 +124,17 @@ class TimingHistory:
             n = counts.get(level,0)
             if not n:
                 continue
-            agent=options.get('profile') in ('tools','coding')
+            agent=options.get('profile') in ('tools','coding','swebench')
             turns=int(options.get('agent_turns',8)) if agent else 1
             budget = max_tokens or (min(BUDGETS[level],4096) if agent else BUDGETS[level])
-            token_low,token_high = TOKEN_RANGES.get(reasoning,TOKEN_RANGES['xhigh'])[index]
+            token_low,token_high = TOKEN_RANGES.get(reasoning,TOKEN_RANGES['xhigh'])[min(index,2) if level=='unrated' else index]
             lo = min(token_low,budget)/fast + 1
             hi = min(token_high,budget)/slow + 6
             if agent:lo*=min(3,turns);hi*=turns
-            judged=options.get('profile')=='writing' and options.get('style_judge_enabled',bool(options.get('style_judge_endpoint')))
+            judged=options.get('profile')=='writingbench' or options.get('profile')=='writing' and options.get('style_judge_enabled',bool(options.get('style_judge_endpoint')))
             if judged:lo+=3;hi+=300
+            if options.get('profile')=='writingbench':lo+=12;hi+=1200
+            if options.get('profile')=='swebench':lo+=60;hi+=float(options.get('swe_test_timeout',900))
             if context_words:
                 # These records tokenize differently from math: include a broad long-prompt read-time range.
                 relevant = [w for w in context_words if ('medium' if w<=8000 else 'very_hard')==level]
@@ -145,8 +150,10 @@ class TimingHistory:
                     measured_levels.append(level)
                     # Small/easy-only samples cannot predict hard reasoning; only adjust that same level.
                     lo,hi = (min(valid)*.6,max(median*2,max(valid)*1.25)) if len(valid)<5 else (min(valid)*.75,max(valid)*1.5)
-            lower += min(lo,timeout*turns+(300 if judged else 0))*n*repeat
-            upper += min(max(lo,hi),timeout*turns+(300 if judged else 0))*n*repeat
+            judge_cap=(1500 if options.get('profile')=='writingbench' else 300) if judged else 0
+            test_cap=float(options.get('swe_test_timeout',900)) if options.get('profile')=='swebench' else 0
+            lower += min(lo,timeout*turns+judge_cap+test_cap)*n*repeat
+            upper += min(max(lo,hi),timeout*turns+judge_cap+test_cap)*n*repeat
         startups = self.startups.get((path,sha,version),[])
         boot_low,boot_high = (max(20,min(startups)*.7),max(startups)*1.8) if startups else (45,300)
         startup_cap = float(options.get('startup_timeout') or 900)
