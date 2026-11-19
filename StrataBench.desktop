@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=StrataBench
+Comment=Compare your local Strata models and engine versions
+Exec=/usr/bin/python3 "/mnt/CodingStuff/llm_benchmark_test/launch-gui.py"
+Path=/mnt/CodingStuff/llm_benchmark_test
+Icon=/mnt/CodingStuff/llm_benchmark_test/stratabench/web/icon.svg
+Terminal=false
+Categories=Development;Science;
+StartupNotify=false

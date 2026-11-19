@@ -1,0 +1,74 @@
+'use strict';
+
+const BENCHMARK_LABELS={gsm8k:'GSM8K',science_qa:'OpenBookQA',math500_numeric:'MATH-500 numeric subset',aime2024:'AIME 2024',arithmetic:'Generated arithmetic',structured_data:'Structured JSON',algorithmic_reasoning:'Graph reasoning',python_tracing:'Python tracing',combinatorics:'Subset counting',exact_scheduling:'Exact scheduling',persian:'Persian arithmetic',context_retrieval:'Long-context retrieval'};
+function groupLabel(group){return BENCHMARK_LABELS[group]||group.replace(/^bbh_/,'BBH · ').replaceAll('_',' ');}
+function planningTime(seconds){if(seconds<60)return Math.max(1,Math.round(seconds))+' sec';if(seconds<3600)return Math.ceil(seconds/60)+' min';if(seconds<86400)return (Math.ceil(seconds/360)/10)+' hr';return (Math.ceil(seconds/8640)/10)+' days';}
+function planningRange(row){return row&&Number.isFinite(row.lower_seconds)?'~'+planningTime(row.lower_seconds)+' – '+planningTime(row.upper_seconds):'Estimate unavailable';}
+function selectedEstimateRows(result){return (result?.rows||[]).filter(r=>selectedConfigs.has(r.config)&&selectedVersions.has(r.version));}
+function selectedEstimateTotal(result){const rows=selectedEstimateRows(result);return rows.length?{lower_seconds:rows.reduce((n,r)=>n+r.lower_seconds,0),upper_seconds:rows.reduce((n,r)=>n+r.upper_seconds,0)}:null;}
+
+function scheduleEstimate(){
+  if(!state||page!=='new')return;
+  const versions=state.versions.filter(v=>selectedVersions.has(v.name)).map(v=>v.name);
+  const configs=state.configs.map(c=>c.id);
+  const payload={...form,versions,configs,tasks_id:customTasks?.id,all_suites:true};
+  const key=JSON.stringify([payload,state.job?.id,state.job?.state,Math.floor(Date.now()/60000)]);
+  if(key===estimateKey)return;
+  estimateKey=key;estimateData=null;clearTimeout(estimateTimer);
+  if(!versions.length||!configs.length)return;
+  estimateTimer=setTimeout(async()=>{
+    try{const result=await api('/api/estimate',payload);if(key!==estimateKey)return;estimateData=result;}
+    catch(error){if(key!==estimateKey)return;estimateData={error:error.message};}
+    if(page==='new'){paintEstimates();}
+  },250);
+}
+
+function paintEstimates(){
+  if(!state||page!=='new')return;
+  all('[data-suite-time]').forEach(el=>{
+    const suite=estimateData?.suites?.[el.dataset.suiteTime];
+    const total=selectedEstimateTotal(suite);
+    el.textContent=suite?.error?'No matching estimate':total?planningRange(total):estimateData?.error?'Estimate unavailable':'Estimating time…';
+    el.title=suite?.notice||suite?.error||'Approximate duration for your selected versions, configs, reasoning and repeats.';
+  });
+  all('[data-config-time]').forEach(el=>{
+    const rows=(estimateData?.rows||[]).filter(r=>r.config===el.dataset.configTime&&selectedVersions.has(r.version));
+    if(!rows.length){el.textContent=estimateData?.error?'Time estimate unavailable':'Estimated time: calculating…';return;}
+    const total={lower_seconds:rows.reduce((n,r)=>n+r.lower_seconds,0),upper_seconds:rows.reduce((n,r)=>n+r.upper_seconds,0)};
+    el.textContent=planningRange(total)+(rows.length>1?' · '+rows.length+' versions':' · current suite');
+    el.title=rows.map(r=>r.version+': '+r.basis).join('\n');
+  });
+  const box=$('#time-estimate-summary');if(!box)return;
+  if(!selectedVersions.size||!selectedConfigs.size){box.innerHTML='<p>Select a version and config for a time estimate.</p>';return;}
+  if(estimateData?.error){box.innerHTML='<strong>Time estimate unavailable</strong><p>'+esc(estimateData.error)+'</p>';return;}
+  const total=selectedEstimateTotal(estimateData);
+  if(!total){box.innerHTML='<strong>Estimating duration…</strong><p>Thinking and model loading are included.</p>';return;}
+  const rows=selectedEstimateRows(estimateData);
+  const measured=rows.reduce((n,r)=>n+r.local_sample_questions,0);
+  const configs=new Map();
+  rows.forEach(r=>{if(!configs.has(r.config))configs.set(r.config,{name:r.name,lower_seconds:0,upper_seconds:0,samples:0,warnings:[]});const c=configs.get(r.config);c.lower_seconds+=r.lower_seconds;c.upper_seconds+=r.upper_seconds;c.samples+=r.local_sample_questions;c.warnings.push(...r.warnings);});
+  box.innerHTML='<span class="eta-eyebrow">ESTIMATED TOTAL TIME</span><strong class="eta-total">'+planningRange(total)+'</strong><p>'+(measured?'Includes '+measured+' locally timed question(s); unmeasured difficulties are estimated.':'Planning range. This combination has not been timed locally.')+'</p><details><summary>Time by configuration</summary>'+[...configs.values()].map(c=>'<div class="eta-config-row"><span title="'+esc(c.name)+'">'+esc(c.name.replace(/^strata-/,''))+'</span><strong>'+planningRange(c)+'</strong>'+[...new Set(c.warnings)].map(w=>'<small>'+esc(w)+'</small>').join('')+'</div>').join('')+'</details><p class="eta-caveat">Per-combination loading and warm-up included. Builds and downloads excluded. Long thinking can exceed this range.</p>';
+}
+
+function versionOrderControls(){return `<div class="version-order-toolbar"><label>Version order <select id="version-sort">${[['newest','Newest first'],['oldest','Oldest first'],['custom','Custom order']].map(([value,label])=>`<option value="${value}" ${state.version_sort_mode===value?'selected':''}>${label}</option>`).join('')}</select></label><p>Drag cards or use Move earlier / Move later. Your order is saved. New versions join the end of a custom order.</p></div>`;}
+async function saveVersionOrder(mode,order){
+  if(mode==='custom'&&!order)order=state.versions.map(v=>v.name);
+  await api('/api/version-order',{mode,order});state=await api('/api/state');
+  estimateKey='';if(['versions','new'].includes(page))render();toast('Version order saved.');
+}
+async function moveVersion(name,direction){const names=state.versions.map(v=>v.name);const from=names.indexOf(name),to=from+direction;if(from<0||to<0||to>=names.length)return;[names[from],names[to]]=[names[to],names[from]];await saveVersionOrder('custom',names);}
+document.addEventListener('dragstart',event=>{const card=event.target.closest?.('[data-version-drag]');if(!card)return;draggedVersion=card.dataset.versionDrag;event.dataTransfer.setData('text/plain',draggedVersion);event.dataTransfer.effectAllowed='move';card.classList.add('dragging');});
+document.addEventListener('dragover',event=>{if(draggedVersion&&event.target.closest?.('[data-version-drag]')){event.preventDefault();event.dataTransfer.dropEffect='move';}});
+document.addEventListener('drop',event=>{const card=event.target.closest?.('[data-version-drag]');if(!card||!draggedVersion)return;event.preventDefault();const names=state.versions.map(v=>v.name),from=names.indexOf(draggedVersion),to=names.indexOf(card.dataset.versionDrag);if(from>=0&&to>=0&&from!==to){const [name]=names.splice(from,1);names.splice(to,0,name);saveVersionOrder('custom',names).catch(error=>toast(error.message,true));}draggedVersion=null;});
+document.addEventListener('dragend',()=>{draggedVersion=null;all('[data-version-drag]').forEach(el=>el.classList.remove('dragging'));});
+
+function renderReferences(){
+  const refs=state.references;
+  if(!refs)return heading('PUBLISHED ORIGINAL-MODEL RESULTS','Original model references','Reference metadata is not available.');
+  const available=refs.rows.filter(r=>r.available);
+  const rows=[...refs.rows].sort((a,b)=>Number(b.available)-Number(a.available)||groupLabel(a.group).localeCompare(groupLabel(b.group)));
+  return heading('PUBLISHED ORIGINAL-MODEL RESULTS','A reference, with the details.','Compare local scores with published original-model results where the model, precision and method can be verified.')+
+    `<div class="reference-overview"><div><span class="badge">Original post-trained model</span><h2>${esc(refs.model)}</h2><p>${esc(refs.precision_note)}</p></div><div><strong>${available.length}</strong><span>verified dataset reference${available.length===1?'':'s'}</span></div></div>`+
+    `<div class="insight-box">${icon('book')}<span>${esc(refs.notice)} Missing scores remain unavailable. A pretrained Base-model score, quantized-model score, or different AIME year is not substituted.</span></div>`+
+    `<section class="card reference-table"><div class="table-toolbar"><div><h2>Dataset coverage</h2><p>Checked ${esc(refs.checked_on)} · BF16 is not FP16 or INT8.</p></div><a class="text-button" href="${esc(refs.official_config)}" target="_blank" rel="noopener">Original model precision</a></div><div class="table-wrap"><table><thead><tr><th>Dataset / task</th><th>Original score</th><th>Weight precision</th><th>Method & source</th><th>Comparison</th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${esc(groupLabel(r.group))}</strong></td><td>${r.available?'<span class="score">'+Number(r.score_percent).toFixed(2)+'%</span>':'<span class="text-muted">Not available</span>'}</td><td>${esc(r.weight_precision||'—')}</td><td class="reference-method">${r.available?'<a href="'+esc(r.source)+'" target="_blank" rel="noopener">'+esc(r.publisher)+'</a><p>'+esc(r.source_type)+'</p><p>'+esc(r.method)+'</p>':esc(r.reason)}</td><td>${r.available?'<span class="badge warn">Context only</span>':'—'}</td></tr>`).join('')}</tbody></table></div></section>`;
+}

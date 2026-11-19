@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "model": "Qwen/Qwen3.8-Flash-Next",
+  "stage": "post-trained",
+  "checked_on": "2026-11-19",
+  "precision": "BF16",
+  "precision_note": "BF16 (bfloat16) is distinct from IEEE FP16. The source explicitly labels the evaluated original model BF16; these are not FP32, FP16, or INT8 scores.",
+  "official_model_card": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/812d96e10a0dd82b69d749e68693698cf6c36daa/README.md",
+  "official_config": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/812d96e10a0dd82b69d749e68693698cf6c36daa/config.json",
+  "official_card_sha256": "5c151489c5de6ba51318e5e03d9ffb80622f118b37e7af550a6c174c5a9fe104",
+  "notice": "Published references are contextual, not matched local baselines. This suite uses its own zero-shot prompts, subsets, exact-answer grading and budgets. There is no published overall reference for this custom task mix.",
+  "scores": [
+    {
+      "id": "daslab-original-bf16-gsm8k",
+      "group": "gsm8k",
+      "dataset": "GSM8K",
+      "score_percent": 96.92,
+      "model": "Qwen/Qwen3.8-Flash-Next",
+      "stage": "post-trained",
+      "weight_precision": "BF16",
+      "kv_precision": "BF16",
+      "publisher": "ISTA-DASLab",
+      "source_type": "Independent evaluation of original weights; not a Qwen vendor score",
+      "source": "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-P48NVFP4-MoESQ/blob/80266c60ab7b2b357ab01c3675eec5f12afef4b4/README.md#openllm-leaderboard-v1-6-task-average",
+      "source_revision": "80266c60ab7b2b357ab01c3675eec5f12afef4b4",
+      "source_sha256": "6517028c4ae73f5ef43d9eff8abc9cb3a7e382e9490fb22d1c8f999f2fe8a6e8",
+      "method": "5-shot chat, thinking off, greedy, strict match; mean across few-shot seeds 1234, 0 and 1; vLLM TP4 with BF16 KV.",
+      "directly_comparable": false,
+      "comparison_note": "Different prompt protocol, thinking setting and potentially sampled question set. A difference is not evidence of quantization loss or improvement."
+    }
+  ],
+  "unavailable": {
+    "science_qa": "No verified original-model result with an explicit precision label was found for OpenBookQA. Quantized-model results are excluded.",
+    "math500_numeric": "No verified original-model score was found for this exact numeric/rational, text-only subset of MATH-500.",
+    "aime2024": "No verified precision-labelled original-model AIME 2024 score was found. AIME 2025 or combined 2024+2025 results are not substituted.",
+    "bbh_boolean_expressions": "No verified original-model score found for this individual BBH task and protocol.",
+    "bbh_date_understanding": "No verified original-model score found for this individual BBH task and protocol.",
+    "bbh_logical_deduction_seven_objects": "No verified original-model score found for this individual BBH task and protocol.",
+    "bbh_multistep_arithmetic_two": "No verified original-model score found for this individual BBH task and protocol.",
+    "bbh_tracking_shuffled_objects_seven_objects": "No verified original-model score found for this individual BBH task and protocol.",
+    "bbh_web_of_lies": "No verified original-model score found for this individual BBH task and protocol.",
+    "bbh_word_sorting": "No verified original-model score found for this individual BBH task and protocol.",
+    "bbh_formal_fallacies": "No verified original-model score found for this individual BBH task and protocol."
+  }
+}

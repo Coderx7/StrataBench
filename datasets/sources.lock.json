@@ -1,0 +1,137 @@
+{
+  "gsm8k-test.jsonl": {
+    "url": "https://raw.githubusercontent.com/openai/grade-school-math/3101c7d5072418e28b9008a6636bde82a006892c/grade_school_math/data/test.jsonl",
+    "homepage": "https://github.com/openai/grade-school-math",
+    "license": "MIT",
+    "sha256": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
+    "bytes": 749738,
+    "retrieved": "2026-11-19T05:57:29.400671+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "gsm8k-LICENSE": {
+    "url": "https://raw.githubusercontent.com/openai/grade-school-math/3101c7d5072418e28b9008a6636bde82a006892c/LICENSE",
+    "homepage": "https://github.com/openai/grade-school-math",
+    "license": "MIT",
+    "sha256": "86bbb73e855821d7c401912fd4bf82e34313e6e3b6fd6f909f2b6cc9e209a53b",
+    "bytes": 1062,
+    "retrieved": "2026-11-19T05:57:30.911627+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "bbh-LICENSE": {
+    "url": "https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/9ee07bd481feebf959a6b59d61ea57bdcf30964d/LICENSE",
+    "homepage": "https://github.com/suzgunmirac/BIG-Bench-Hard",
+    "license": "MIT",
+    "sha256": "4ef2ff4295d26ab6211235039c132697408cec5391d2c091b41e983771978db8",
+    "bytes": 1068,
+    "retrieved": "2026-11-19T05:57:31.367439+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "math500.jsonl": {
+    "url": "https://huggingface.co/datasets/HuggingFaceH4/MATH-500/resolve/6e4ed1a/test.jsonl",
+    "homepage": "https://huggingface.co/datasets/HuggingFaceH4/MATH-500",
+    "license": "See upstream MATH terms; personal evaluation",
+    "sha256": "35dc41080a3680858b27fa7e0533d2d547825316fc5dafe5d316f4ccc5a06132",
+    "bytes": 446564,
+    "retrieved": "2026-11-19T05:57:34.114761+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "openbookqa.zip": {
+    "url": "https://s3-us-west-2.amazonaws.com/ai2-website/data/OpenBookQA-V1-Sep2018.zip",
+    "homepage": "https://github.com/allenai/OpenBookQA",
+    "license": "Apache-2.0",
+    "sha256": "82368cf05df2e3b309c17d162e10b888b4d768fad6e171e0a041954c8553be46",
+    "bytes": 1446098,
+    "retrieved": "2026-11-19T06:00:16.614894+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "openbookqa-LICENSE": {
+    "url": "https://raw.githubusercontent.com/allenai/OpenBookQA/b51971646e9371a61508d9953fc706645e194a71/LICENSE",
+    "homepage": "https://github.com/allenai/OpenBookQA",
+    "license": "Apache-2.0",
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "bytes": 11357,
+    "retrieved": "2026-11-19T06:00:17.459590+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "aime24.json": {
+    "url": "https://datasets-server.huggingface.co/rows?dataset=math-ai%2Faime24&config=default&split=test&offset=0&length=100",
+    "homepage": "https://huggingface.co/datasets/math-ai/aime24",
+    "license": "Dataset card: Apache-2.0; competition problems retain their source rights",
+    "sha256": "3457401f322d45e5b102163e2e5cf3f6783b020a567e103c438f03553e2798f6",
+    "bytes": 15938,
+    "retrieved": "2026-11-19T06:00:18.324348+00:00",
+    "revision_note": "AIME rows API snapshot is pinned by checksum after first download."
+  },
+  "bbh-boolean_expressions.json": {
+    "url": "https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/9ee07bd481feebf959a6b59d61ea57bdcf30964d/bbh/boolean_expressions.json",
+    "homepage": "https://github.com/suzgunmirac/BIG-Bench-Hard",
+    "license": "MIT",
+    "sha256": "ea6c754ec005e2d3f2d085d349a740f593b5764f32ea4638ffed4cfc0061b12a",
+    "bytes": 17172,
+    "retrieved": "2026-11-19T06:00:18.811228+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "bbh-date_understanding.json": {
+    "url": "https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/9ee07bd481feebf959a6b59d61ea57bdcf30964d/bbh/date_understanding.json",
+    "homepage": "https://github.com/suzgunmirac/BIG-Bench-Hard",
+    "license": "MIT",
+    "sha256": "0148d4ac5fca05b2f82373e5fef7208e15363b9c6079493034d77b3dab496bf5",
+    "bytes": 61760,
+    "retrieved": "2026-11-19T06:00:20.387373+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "bbh-logical_deduction_seven_objects.json": {
+    "url": "https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/9ee07bd481feebf959a6b59d61ea57bdcf30964d/bbh/logical_deduction_seven_objects.json",
+    "homepage": "https://github.com/suzgunmirac/BIG-Bench-Hard",
+    "license": "MIT",
+    "sha256": "2896c7e3482eea318dd37bcc370d24ec3cc91e8374c1784287b5dbd38a529e33",
+    "bytes": 198404,
+    "retrieved": "2026-11-19T06:00:21.110739+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "bbh-multistep_arithmetic_two.json": {
+    "url": "https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/9ee07bd481feebf959a6b59d61ea57bdcf30964d/bbh/multistep_arithmetic_two.json",
+    "homepage": "https://github.com/suzgunmirac/BIG-Bench-Hard",
+    "license": "MIT",
+    "sha256": "c9d5a6433c9b78256422a15c78463949c8bec8d85607aa28b52d7234ad4a8595",
+    "bytes": 18325,
+    "retrieved": "2026-11-19T06:00:22.002115+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "bbh-tracking_shuffled_objects_seven_objects.json": {
+    "url": "https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/9ee07bd481feebf959a6b59d61ea57bdcf30964d/bbh/tracking_shuffled_objects_seven_objects.json",
+    "homepage": "https://github.com/suzgunmirac/BIG-Bench-Hard",
+    "license": "MIT",
+    "sha256": "b59fd05b850c37cf57cb514ae1e6975c00b1638ade2291722056b2af3c54084d",
+    "bytes": 214906,
+    "retrieved": "2026-11-19T06:00:22.899752+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "bbh-web_of_lies.json": {
+    "url": "https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/9ee07bd481feebf959a6b59d61ea57bdcf30964d/bbh/web_of_lies.json",
+    "homepage": "https://github.com/suzgunmirac/BIG-Bench-Hard",
+    "license": "MIT",
+    "sha256": "3e60323f8514a107fdb4edf35f8832a9171c5a09c0eaa47823559de905e8ab8b",
+    "bytes": 52964,
+    "retrieved": "2026-11-19T06:00:23.475850+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "bbh-word_sorting.json": {
+    "url": "https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/9ee07bd481feebf959a6b59d61ea57bdcf30964d/bbh/word_sorting.json",
+    "homepage": "https://github.com/suzgunmirac/BIG-Bench-Hard",
+    "license": "MIT",
+    "sha256": "2a6132d2c99f00d0d2eb1113ac6b4a918bd969d863c48749210d969713db8d43",
+    "bytes": 66300,
+    "retrieved": "2026-11-19T06:00:24.095987+00:00",
+    "revision_note": "Revision is pinned in URL."
+  },
+  "bbh-formal_fallacies.json": {
+    "url": "https://raw.githubusercontent.com/suzgunmirac/BIG-Bench-Hard/9ee07bd481feebf959a6b59d61ea57bdcf30964d/bbh/formal_fallacies.json",
+    "homepage": "https://github.com/suzgunmirac/BIG-Bench-Hard",
+    "license": "MIT",
+    "sha256": "4c1adb664821157faade1d4153685403afcc02648f3c180a608a18f17f589629",
+    "bytes": 145562,
+    "retrieved": "2026-11-19T06:00:25.124660+00:00",
+    "revision_note": "Revision is pinned in URL."
+  }
+}

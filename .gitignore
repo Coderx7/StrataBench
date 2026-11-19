@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+settings.json
+versions/
+results/
+.*.lock
+datasets/raw/
+.gui-instance.json
+.gui.log
+user-configs/
+user-tasks/
