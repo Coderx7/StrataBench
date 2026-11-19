@@ -6,8 +6,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
-import tarfile
 import urllib.request
 
 from .common import ROOT, capture, digest, file_hash, read_json, save_settings, settings, stamp, write_json
@@ -20,7 +18,12 @@ def safe_name(name):
 
 
 def discover(root=None):
-    root = Path(root or settings()['strata_root']).resolve()
+    if root is None:
+        state = settings()
+        root = state.get('strata_source',{}).get('config_folder') or state.get('strata_root')
+    if not root:
+        return []
+    root = Path(root).expanduser().resolve()
     out = []
     for path in sorted(root.glob('strata-*.json')):
         try:
@@ -40,7 +43,8 @@ def fingerprint(root, exe):
     result['server_tree_sha256'] = digest({str(p.relative_to(root)): file_hash(p)
         for p in sorted((root / 'serve').rglob('*'))
         if p.is_file() and p.suffix in ('.py', '.jinja', '.json')})
-    result['helper_libraries'] = {p.name: file_hash(p) for p in sorted(exe.parent.glob('*.so*')) if p.is_file()}
+    result['helper_libraries'] = {p.name: file_hash(p) for p in sorted(exe.parent.iterdir())
+        if p.is_file() and ('.so' in p.name or p.suffix.lower() in ('.dll','.dylib'))}
     tokenizer_module = root / 'tools/strata_tokenizer.py'
     if tokenizer_module.exists():
         result['tokenizer_module_sha256'] = file_hash(tokenizer_module)
@@ -55,11 +59,12 @@ def fingerprint(root, exe):
 
 
 def snapshot(name=None, source=None, exe=None, python=None):
+    from .acquisition import copy_engine, copy_runtime, local_engine, preferences, python_runtime
+    from .platforms import executable
     state = settings()
-    source = Path(source or state['strata_root']).resolve()
-    exe = Path(exe or source / 'engine/strata').resolve()
-    if not exe.is_file() or not (source / 'serve/server.py').is_file():
-        raise ValueError('A built Strata engine and serve/server.py are required.')
+    cfg = preferences(state)
+    source = Path(source or cfg['folder'] or state['strata_root']).expanduser().resolve()
+    exe = local_engine(source, exe)
     build = read_json(exe.parent / 'BUILD.json') if (exe.parent / 'BUILD.json').exists() else {}
     name = safe_name(name or ('v' + build.get('version', 'local')))
     dest = ROOT / 'versions' / name
@@ -67,23 +72,16 @@ def snapshot(name=None, source=None, exe=None, python=None):
         raise ValueError(f'{name} already exists. Use it as-is or choose a different label.')
     dest.mkdir(parents=True)
     try:
-        shutil.copytree(source / 'serve', dest / 'serve', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-        (dest / 'tools').mkdir()
-        shutil.copy2(source / 'tools/strata_tokenizer.py', dest / 'tools/strata_tokenizer.py')
-        (dest / 'engine').mkdir()
-        for p in exe.parent.iterdir():
-            if p.is_file() and (p.name in (exe.name, 'strata-vision', 'BUILD.json') or '.so' in p.name):
-                shutil.copy2(p, dest / 'engine' / ('strata' if p == exe else p.name))
+        copy_runtime(source, dest)
+        engine = copy_engine(exe, dest / 'engine')
         if (source / 'LICENSE').exists():
             shutil.copy2(source / 'LICENSE', dest / 'LICENSE')
-        py = str(Path(python or source / '.venv/bin/python').absolute())
-        if not Path(py).exists():
-            import sys
-            py = sys.executable
-        info = {'name': name, 'root': str(dest), 'exe': str(dest / 'engine/strata'),
+        if python: cfg['python'] = python
+        py = python_runtime(cfg, source, dest)
+        info = {'name': name, 'root': str(dest), 'exe': str(engine),
                 'python': py, 'origin': str(source), 'kind': 'snapshot', 'created': stamp(),
                 'git': capture(['git', '-C', str(source), 'rev-parse', 'HEAD'])['output'],
-                'fingerprint': fingerprint(dest, dest / 'engine/strata')}
+                'fingerprint': fingerprint(dest, engine)}
         write_json(dest / 'version.json', info)
     except BaseException:
         shutil.rmtree(dest)
@@ -95,19 +93,8 @@ def snapshot(name=None, source=None, exe=None, python=None):
 
 
 def extract_tar(archive, dest, strip_top=False):
-    dest = Path(dest).resolve()
-    with tarfile.open(archive) as tf:
-        for member in tf.getmembers():
-            parts = Path(member.name).parts
-            if strip_top:
-                parts = parts[1:]
-            if not parts:
-                continue
-            member.name = str(Path(*parts))
-            target = (dest / member.name).resolve()
-            if not target.is_relative_to(dest) or member.issym() or member.islnk() or member.isdev():
-                raise ValueError('Unsafe entry in source archive: ' + member.name)
-            tf.extract(member, dest, filter='data')
+    from .acquisition import unpack
+    unpack(archive, dest, strip_top)
 
 
 def download(url, dest):
@@ -122,82 +109,9 @@ def download(url, dest):
         tmp.unlink(missing_ok=True)
 
 
-def build(tag, jobs=4, extra=(), python=None):
-    """Use local Git objects when available; otherwise fetch only into our own bare repository."""
-    name = safe_name(tag)
-    state = settings()
-    dest = ROOT / 'versions' / name
-    if name in state['versions']:
-        print(f'{name} is already registered.')
-        return state['versions'][name]
-    dest.mkdir(parents=True, exist_ok=True)
-    repo = Path(state['strata_root'])
-    resolved = capture(['git', '-C', str(repo), 'rev-parse', '--verify', f'{tag}^{{commit}}'])
-    if not resolved['ok']:
-        repo = ROOT / 'versions' / '_git'
-        if not repo.exists():
-            subprocess.run(['git', 'init', '--bare', str(repo)], check=True)
-        subprocess.run(['git', '-C', str(repo), 'fetch', '--depth=1',
-                        'https://github.com/Niko1221/Strata.git', 'refs/tags/' + tag], check=True)
-        resolved = capture(['git', '-C', str(repo), 'rev-parse', 'FETCH_HEAD'])
-    commit = resolved['output']
-    if not resolved['ok'] or not re.fullmatch('[0-9a-f]{40}', commit):
-        raise RuntimeError('Could not resolve that Strata version.')
-    source_stamp = dest / 'source.json'
-    if source_stamp.exists() and read_json(source_stamp)['commit'] != commit:
-        raise RuntimeError('Tag now points to different source; choose a new version label.')
-    if not source_stamp.exists():
-        archive = dest / 'source.tar'
-        with archive.open('wb') as f:
-            subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', commit], stdout=f, check=True)
-        extract_tar(archive, dest)
-        archive.unlink()
-        write_json(source_stamp, {'commit': commit})
-    if not shutil.which('cmake') or not shutil.which('nvcc'):
-        raise RuntimeError('This version needs your existing CMake and CUDA compiler in PATH. Nothing was installed.')
-    # Use the exact ggml revision required by this version. A separate source archive avoids a huge Git clone.
-    version_file = dest / 'third_party/ggml/VERSION.txt'
-    pin = re.search(r'\b[0-9a-f]{40}\b', version_file.read_text()).group() if version_file.exists() else None
-    definitions = []
-    if pin:
-        dep = ROOT / 'versions' / '_dependencies' / pin
-        if not (dep / 'ggml/CMakeLists.txt').exists():
-            dep.mkdir(parents=True, exist_ok=True)
-            tgz = dep.parent / (pin + '.tar.gz')
-            download('https://codeload.github.com/ggml-org/llama.cpp/tar.gz/' + pin, tgz)
-            extract_tar(tgz, dep, strip_top=True)
-            tgz.unlink()
-        definitions.append('-DSTRATA_GGML_DIR=' + str(dep))
-    flags = ['-DSTRATA_ENABLE_CUDA=ON', '-DSTRATA_BUILD_TESTS=OFF', '-DCMAKE_BUILD_TYPE=Release',
-             '-DCMAKE_CUDA_ARCHITECTURES=86', '-DCMAKE_CUDA_COMPILER=' + shutil.which('nvcc'),
-             '-DSTRATA_MMQ_KQUANTS=ON', '-DSTRATA_Q6K_EXPERTS=ON', *definitions, *extra]
-    log = dest / 'build.log'
-    print(f'Building {tag} for RTX 3080 (sm_86), {jobs} jobs. Progress: {log}', flush=True)
-    commands = [['cmake', '-S', str(dest), '-B', str(dest / 'build'), *flags],
-                ['cmake', '--build', str(dest / 'build'), '--target', 'strata', '-j', str(jobs)]]
-    with log.open('a') as f:
-        for cmd in commands:
-            f.write('\n' + repr(cmd) + '\n')
-            f.flush()
-            p = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)
-            if p.returncode:
-                tail = '\n'.join(log.read_text(errors='replace').splitlines()[-16:])
-                raise RuntimeError(f'Build failed. Nothing in your original install changed.\n{tail}\nFull log: {log}')
-    (dest / 'engine').mkdir(exist_ok=True)
-    shutil.copy2(dest / 'build/strata', dest / 'engine/strata')
-    for p in (dest / 'build').rglob('libstrata*.so*'):
-        shutil.copy2(p, dest / 'engine' / p.name)
-    original_py = Path(state['strata_root']) / '.venv/bin/python'
-    import sys
-    info = {'name': name, 'root': str(dest), 'exe': str(dest / 'engine/strata'),
-            'python': str(python or (original_py if original_py.exists() else sys.executable)),
-            'kind': 'built', 'created': stamp(), 'git': commit, 'cmake_flags': flags,
-            'ggml_commit': pin, 'fingerprint': fingerprint(dest, dest / 'engine/strata')}
-    write_json(dest / 'version.json', info)
-    state['versions'][name] = info
-    save_settings(state)
-    print(f'{name} is ready. Models and packs were reused, not downloaded.')
-    return info
+def build(tag, jobs=None, extra=(), python=None):
+    from .acquisition import prepare
+    return prepare(tag, jobs, extra, python)
 
 
 def effective_config(source_path, version, work, port, keep_vision=False):
@@ -250,7 +164,8 @@ def effective_config(source_path, version, work, port, keep_vision=False):
         # Keep engine --vision: it is a tested engine allocation setting in the supplied config.
         changes.append('image encoder disabled for text suite; engine --vision flag preserved')
     elif cfg.get('vision'):
-        vision_exe = Path(version['root']) / 'engine/strata-vision'
+        from .platforms import executable
+        vision_exe = Path(version['exe']).parent / executable('strata-vision')
         if not vision_exe.exists():
             raise ValueError('This version has no vision binary. Omit --keep-vision for text benchmarks.')
         cfg['vision']['exe'] = str(vision_exe)

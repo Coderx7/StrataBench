@@ -77,7 +77,7 @@ class TimingHistory:
                         continue
                     # Retain the latest attempt; repeated copies of a smoke question are not independent coverage.
                     latest = {}
-                    with answers.open() as f:
+                    with answers.open(encoding='utf-8') as f:
                         for line in f:
                             try:
                                 row = __import__('json').loads(line)

@@ -1,6 +1,5 @@
 """Live inspection must never edit a running log or count retry history twice."""
 import contextlib
-import fcntl
 import io
 import json
 from pathlib import Path
@@ -10,6 +9,7 @@ from unittest import mock
 
 from stratabench import gui
 from stratabench.common import write_json
+from stratabench.platforms import lock_file
 
 
 class OutcomeTests(unittest.TestCase):
@@ -87,8 +87,9 @@ class OutcomeTests(unittest.TestCase):
             with self.assertRaises(ValueError): self.app.outcomes(self.folder,data)
 
     def test_live_lock_and_owned_job_prevent_resume(self):
-        with (self.root / '.run.lock').open('w') as stream:
-            fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        with (self.root / '.run.lock').open('w+b') as stream:
+            stream.write(b'0');stream.flush()
+            lock_file(stream)
             data=self.app.outcomes(self.folder)
             self.assertTrue(data['active'])
             self.assertFalse(data['resumable'])

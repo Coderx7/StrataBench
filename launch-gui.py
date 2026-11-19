@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """Desktop entry point: no terminal window and no package installation."""
 from stratabench.gui import launch, notify_error
 

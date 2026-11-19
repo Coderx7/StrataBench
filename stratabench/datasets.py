@@ -119,7 +119,7 @@ def load_public():
         prompt = q['stem'] + '\n' + '\n'.join('('+x['label']+') '+x['text'] for x in q['choices'])
         out.append(case('openbookqa/'+d['id'], 'science_qa', 'medium', prompt, d['answerKey'],
                         'choice', source='OpenBookQA test'))
-    for i, row in enumerate((DATA / 'raw/gsm8k-test.jsonl').read_text().splitlines()):
+    for i, row in enumerate((DATA / 'raw/gsm8k-test.jsonl').read_text(encoding='utf-8').splitlines()):
         d = json.loads(row)
         out.append(case(f'gsm8k/{i}', 'gsm8k', 'medium', d['question'],
                         d['answer'].rsplit('####', 1)[1].strip(), source='GSM8K test'))
@@ -129,7 +129,7 @@ def load_public():
                             d['target'], grader, source='BIG-Bench Hard'))
     # Restrict MATH-500 to unambiguous numeric/rational answers and text-only questions.
     # This deliberately is NOT an official MATH-500 score or a symbolic equivalence grader.
-    for i, line in enumerate((DATA / 'raw/math500.jsonl').read_text().splitlines()):
+    for i, line in enumerate((DATA / 'raw/math500.jsonl').read_text(encoding='utf-8').splitlines()):
         d = json.loads(line)
         if numeric(d['answer']) is None or '[asy]' in d['problem']:
             continue

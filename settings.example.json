@@ -1,0 +1,19 @@
+{
+  "strata_root": "",
+  "default_reasoning": "xhigh",
+  "versions": {},
+  "strata_source": {
+    "method": "release",
+    "repository": "https://github.com/Niko1221/Strata.git",
+    "folder": "",
+    "config_folder": "",
+    "python": "",
+    "python_mode": "managed",
+    "build_jobs": 4,
+    "cuda_architectures": "native",
+    "backend": "cuda12",
+    "asset": "auto",
+    "allow_unverified": false,
+    "cmake_args": []
+  }
+}

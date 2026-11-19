@@ -94,7 +94,7 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(len(a), 7)
         self.assertEqual({c['difficulty'] for c in datasets.select('smoke', 123, 'easy')}, {'easy'})
 
-    @unittest.skipUnless((datasets.DATA / 'sources.lock.json').exists(), 'public cache not downloaded')
+    @unittest.skipUnless((datasets.DATA / 'sources.lock.json').exists() and all((datasets.DATA / 'raw' / name).is_file() for name,*_ in datasets.sources()), 'public cache not downloaded')
     def test_real_public_sources_validate_and_answer_types(self):
         cases = datasets.load_public()
         self.assertEqual(len(cases), 4195)

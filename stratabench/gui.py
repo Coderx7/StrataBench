@@ -6,7 +6,6 @@ from datetime import datetime
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import contextlib
-import fcntl
 import json
 import mimetypes
 import os
@@ -27,23 +26,15 @@ from . import datasets, versions
 from .version_order import apply_order, ordered_names
 from .reference_scores import catalog as reference_catalog, reference_rows
 from .estimates import TimingHistory
+from .platforms import is_locked, process_options, stop_tree, windows, find_python
+from . import acquisition
 
 ASSETS = ROOT / 'stratabench' / 'web'
 INSTANCE = ROOT / '.gui-instance.json'
 
 
 def benchmark_locked():
-    """Check the runner's lock without creating or changing any files."""
-    try:
-        with (ROOT / '.run.lock').open('rb') as stream:
-            try:
-                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                return True
-            fcntl.flock(stream, fcntl.LOCK_UN)
-    except FileNotFoundError:
-        pass
-    return False
+    return is_locked(ROOT / '.run.lock')
 
 
 class AnswerIndex:
@@ -204,6 +195,21 @@ class App:
             except (ValueError, RuntimeError, OSError):
                 count = None
             self.profiles.append({'id': key, 'name': name, 'description': description, 'count': count})
+        self.public_ready = all(p['count'] is not None for p in self.profiles) and self.public_files_present()
+
+    def public_files_present(self):
+        return (ROOT / 'datasets/sources.lock.json').is_file() and all(
+            (ROOT / 'datasets/raw' / name).is_file() for name, *_ in datasets.sources())
+
+    def refresh_public_library(self):
+        if self.public_ready or not self.public_files_present():
+            return
+        for profile in self.profiles:
+            cases = datasets.select(profile['id'])
+            profile['count'] = len(cases)
+            self.profile_counts[profile['id']] = Counter(c['difficulty'] for c in cases)
+            self.groups.update(c.get('group','custom') for c in cases)
+        self.public_ready = True
 
     def outcomes(self, folder, data=None, summary_only=False):
         """Read the saved plan and latest attempt for every evaluation, including pending work."""
@@ -301,6 +307,8 @@ class App:
 
     def state(self):
         s = settings()
+        with contextlib.suppress(OSError, ValueError, RuntimeError):
+            self.refresh_public_library()
         with self.lock:
             job = dict(self.job) if self.job else None
             if job:
@@ -326,16 +334,18 @@ class App:
                 'hardware': self.hardware, 'runs': runs, 'job': job,
                 'references': refs, 'version_sort_mode': s.get('version_sort_mode','newest'),
                 'strata_root': s['strata_root'], 'default_reasoning': 'xhigh',
-                'datasets_ready': (ROOT / 'datasets/sources.lock.json').exists()}
+                'strata_source': acquisition.preferences(s),
+                'platform': 'Windows' if windows() else 'Linux',
+                'datasets_ready': self.public_ready}
 
     def start(self, kind, command, title, **extra):
         with self.lock:
             if self.job and self.job['state'] in ('running', 'stopping'):
                 raise ValueError('An operation is already running. Stop it or wait for it to finish.')
-            env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1')
-            proc = subprocess.Popen([sys.executable, str(ROOT / 'bench'), *command], cwd=ROOT,
+            env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+            proc = subprocess.Popen([find_python(), str(ROOT / 'bench'), *command], cwd=ROOT,
                 env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, start_new_session=True)
+                text=True, encoding='utf-8', errors='replace', bufsize=1, **process_options())
             self.proc = proc
             self.job = {'id': uuid.uuid4().hex, 'kind': kind, 'title': title, 'state': 'running',
                         'started_at': time.time(), 'stage': 'Preparing', 'logs': [], 'completed': 0,
@@ -398,10 +408,40 @@ class App:
             self.job['state'] = 'stopping'
             self.job['stage'] = 'Stopping safely · saving answers'
             # Runner catches SIGINT and closes its separately grouped model server in finally.
-            os.killpg(proc.pid, signal.SIGINT)
+            if windows():
+                threading.Thread(target=stop_tree, args=(proc,), daemon=True).start()
+            else:
+                stop_tree(proc, interrupt=True)
             return {'ok': True}
 
     def action(self, route, data):
+        if route == '/api/strata-source':
+            with local_lock('.prepare.lock'):
+                cfg = acquisition.configure(data)
+            return {'ok': True, 'settings': cfg}
+        if route == '/api/strata-release':
+            cfg = acquisition.validate(data)
+            tag = versions.safe_name(str(data.get('tag','latest')).strip())
+            release = acquisition.release_info(cfg,tag)
+            return {'tag':release['tag_name'], 'assets':[{'name':a['name'],'bytes':a.get('size',0),
+                'digest':a.get('digest')} for a in acquisition.compatible_assets(release,cfg)]}
+        if route == '/api/strata-detect':
+            cfg = acquisition.preferences()
+            candidates = [data.get('folder'),cfg['folder'],os.environ.get('STRATABENCH_STRATA_ROOT'),
+                os.environ.get('STRATA_HOME'),str(ROOT.parent / 'Strata'),str(Path.home() / 'Strata')]
+            import shutil
+            found = shutil.which('strata')
+            if found:candidates += [str(Path(found).parent),str(Path(found).parent.parent)]
+            detected = []
+            for value in dict.fromkeys(x for x in candidates if x):
+                try:
+                    path = Path(value).expanduser().resolve()
+                    runtime = acquisition.runtime_source(path)
+                    engine = acquisition.local_engine(path)
+                    detected.append({'folder':str(path),'server':str(runtime / 'serve/server.py'), 'engine':str(engine)})
+                except (ValueError,OSError):
+                    continue
+            return {'candidates':detected}
         if route == '/api/outcomes':
             return self.outcomes(result_path(data.get('id')), data)
         if route == '/api/version-order':
@@ -420,13 +460,12 @@ class App:
             tag = versions.safe_name(str(data.get('tag', '')).strip())
             if tag in settings()['versions']:
                 raise ValueError('This version is already ready to use.')
-            jobs = number(data, 'jobs', 4, 1, 32)
+            jobs = number(data, 'jobs', acquisition.preferences()['build_jobs'], 1, 64)
             return self.start('add-version', ['add-version', tag, '--jobs', str(jobs)], 'Preparing '+tag, version=tag)
         if route == '/api/import-version':
             name = versions.safe_name(str(data.get('name', '')).strip())
             source = Path(str(data.get('source', ''))).expanduser().resolve()
-            if not (source / 'serve/server.py').is_file():
-                raise ValueError('Choose the Strata folder containing serve/server.py.')
+            acquisition.runtime_source(source)
             cmd = ['snapshot', '--name', name, '--source', str(source)]
             for field in ('exe', 'python'):
                 if data.get(field):
@@ -502,7 +541,7 @@ class App:
             options['context_words_list'] = words
         elif profile == 'custom':
             path = ROOT/'user-tasks'/data['tasks_id']
-            counts = Counter(json.loads(line)['difficulty'] for line in path.read_text().splitlines() if line.strip())
+            counts = Counter(json.loads(line)['difficulty'] for line in path.read_text(encoding='utf-8').splitlines() if line.strip())
             difficulties = set(datasets.DIFFICULTIES)
         else:
             counts = self.profile_counts.get(profile)
@@ -518,7 +557,7 @@ class App:
         return {'profile':profile,'questions':sum(counts.values()),'combinations':len(rows),'rows':rows,
                 'lower_seconds':sum(r['lower_seconds'] for r in rows),
                 'upper_seconds':sum(r['upper_seconds'] for r in rows),
-                'notice':'Approximate wall-clock range on your RTX 3080 / 64 GB PC, including a load and warm-up per combination. Builds/downloads are excluded. Unmeasured difficulty levels use broad token and throughput assumptions; actual thinking can vary substantially.'}
+                'notice':'Approximate wall-clock range including loading and warm-up. Builds/downloads are excluded. Unmeasured settings use an RTX 3080 / 64 GB planning baseline; other hardware and long reasoning can differ substantially. Local timing history improves these estimates.'}
 
     def import_file(self, data):
         kind, content = data.get('kind'), data.get('content')
@@ -613,7 +652,7 @@ def handler(app):
                         raise ValueError('This report file is not available.')
                     file = result_path(parts[2]) / parts[3]
                     self.send(200, file.read_bytes(), mimetypes.guess_type(file.name)[0] or 'application/octet-stream')
-                elif path in ('/', '/app.js', '/helpers.js', '/outcomes.js', '/style.css', '/icon.svg'):
+                elif path in ('/', '/app.js', '/helpers.js', '/outcomes.js', '/setup.js', '/style.css', '/icon.svg'):
                     file = ASSETS / ('index.html' if path == '/' else path[1:])
                     self.send(200, file.read_bytes(), mimetypes.guess_type(file.name)[0] or 'text/plain')
                 else:
@@ -641,7 +680,10 @@ def handler(app):
 
 
 def notify_error(message):
-    if capture(['which', 'zenity'])['ok']:
+    if windows():
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, str(message), 'StrataBench', 0x10)
+    elif capture(['which', 'zenity'])['ok']:
         subprocess.run(['zenity', '--error', '--title=StrataBench', '--text='+str(message)], check=False)
 
 
@@ -661,8 +703,8 @@ def launch(open_browser=True, port=18770):
                     return info
     log_path = ROOT / '.gui.log'
     with log_path.open('a') as log:
-        process = subprocess.Popen([sys.executable, '-m', 'stratabench.gui', '--serve', '--port', str(port)],
-            cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        process = subprocess.Popen([find_python(), '-m', 'stratabench.gui', '--serve', '--port', str(port)],
+            cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, **process_options())
     for _ in range(150):
         if process.poll() is not None:
             raise RuntimeError('StrataBench could not start. '+log_path.read_text(errors='replace')[-2000:])

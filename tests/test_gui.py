@@ -135,6 +135,35 @@ if(!calls.includes('/api/state'))throw Error('Application startup never reached 
             self.assertEqual(state['version_sort_mode'],'custom')
             self.assertEqual(state['version_order'],['v-test'])
 
+    def test_source_settings_save_without_downloading_or_building(self):
+        source_state={'strata_root':'','versions':{}}
+        with mock.patch.object(gui.acquisition,'settings',return_value=source_state), \
+                mock.patch.object(gui.acquisition,'save_settings') as save, mock.patch.object(self.app,'start') as start:
+            with self.request('/api/strata-source',{'method':'repository','repository':'https://github.com/example/Strata.git',
+                    'python_mode':'managed','cuda_architectures':'89','build_jobs':3}) as response:
+                self.assertTrue(json.load(response)['ok'])
+            self.assertEqual(save.call_args.args[0]['strata_source']['cuda_architectures'],'89')
+            self.assertEqual(save.call_args.args[0]['strata_source']['repository'],'https://github.com/example/Strata.git')
+            start.assert_not_called()
+
+    def test_release_probe_lists_compatible_assets_without_preparing(self):
+        from stratabench.platforms import platform_id
+        system,arch=platform_id()
+        name=f'strata-engine-1-{system}-{arch}-cuda-cuda12.tar.gz'
+        release={'tag_name':'v1','assets':[{'name':name,'size':123,'digest':'sha256:'+'a'*64}]}
+        with mock.patch.object(gui.acquisition,'release_info',return_value=release),mock.patch.object(self.app,'start') as start:
+            with self.request('/api/strata-release',{'method':'release','tag':'latest'}) as response:
+                data=json.load(response)
+            self.assertEqual(data['tag'],'v1');self.assertEqual(data['assets'][0]['name'],name)
+            start.assert_not_called()
+
+    def test_public_library_refreshes_after_first_download_without_restarting(self):
+        self.app.public_ready=False
+        with mock.patch.object(self.app,'public_files_present',return_value=True):
+            self.app.refresh_public_library()
+        self.assertTrue(self.app.public_ready)
+        self.assertTrue(all(p['count']==1 for p in self.app.profiles))
+
     def test_unknown_version_and_config_rejected(self):
         with mock.patch.object(self.app, 'start') as start:
             for data in ({'versions': ['v-test'], 'configs': ['/arbitrary.json']},

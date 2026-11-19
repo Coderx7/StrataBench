@@ -5,13 +5,13 @@ import http.client
 import json
 import os
 from pathlib import Path
-import signal
 import socket
 import subprocess
 import time
 import urllib.error
 
-from .common import ROOT, capture, digest, file_hash, hardware, read_json, request_json, stamp, write_json
+from .common import ROOT, digest, file_hash, hardware, read_json, request_json, stamp, write_json
+from .platforms import process_options, stop_tree
 from .grading import grade
 from .versions import effective_config, fingerprint
 
@@ -45,17 +45,7 @@ def is_port_free(port):
 
 
 def stop_process(proc):
-    # Only the process group we created, including its engine and image encoder.
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(proc.pid, signal.SIGTERM)
-    try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        pass
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(proc.pid, signal.SIGKILL)
-    with contextlib.suppress(subprocess.TimeoutExpired):
-        proc.wait(timeout=5)
+    stop_tree(proc)
 
 
 @contextlib.contextmanager
@@ -68,7 +58,11 @@ def server(version, config_path, work, options):
     env = os.environ.copy()
     # Keep bytecode, transient files, and automatic library tuning outputs in the run folder.
     env['PYTHONDONTWRITEBYTECODE'] = '1'
+    env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUTF8'] = '1'
     env['TMPDIR'] = str(work)
+    env['TMP'] = str(work)
+    env['TEMP'] = str(work)
     env['XDG_CACHE_HOME'] = str(work / 'cache')
     env.pop('STRATA_API_KEY', None)
     cfg.pop('api_key', None)
@@ -85,7 +79,7 @@ def server(version, config_path, work, options):
     started = time.monotonic()
     with (work / 'server.log').open('a') as log:
         proc = subprocess.Popen(command, cwd=work, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                start_new_session=True)
+                                **process_options())
         try:
             last_notice = started
             while True:
@@ -137,7 +131,7 @@ def load_rows(path):
     if not Path(path).exists():
         return []
     rows = []
-    lines = Path(path).read_text().splitlines()
+    lines = Path(path).read_text(encoding='utf-8').splitlines()
     for i, line in enumerate(lines):
         try:
             rows.append(json.loads(line))
@@ -145,7 +139,7 @@ def load_rows(path):
             if i != len(lines)-1:
                 raise RuntimeError(f'Corrupt result line {i+1}: {path}') from None
             # An interrupted disk write is recoverable; discard only the final partial record.
-            Path(path).write_text('\n'.join(lines[:i]) + ('\n' if i else ''))
+            Path(path).write_text('\n'.join(lines[:i]) + ('\n' if i else ''), encoding='utf-8')
     return rows
 
 

@@ -120,11 +120,11 @@ def generate(folder, sources=None):
     fields = ['label', 'complete', 'macro_accuracy', 'accuracy', 'correct', 'answered', 'planned',
               'errors', 'truncated', 'unparsed', 'elapsed_seconds', 'completion_tokens',
               'effective_tokens_per_second', 'median_latency', 'p95_latency', 'folder']
-    with (folder / 'leaderboard.csv').open('w', newline='') as f:
+    with (folder / 'leaderboard.csv').open('w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(summaries)
-    with (folder / 'reference-scores.csv').open('w', newline='') as f:
+    with (folder / 'reference-scores.csv').open('w', newline='', encoding='utf-8') as f:
         fields = ['group','original_model','reference_score_percent','weight_precision','kv_precision',
                   'publisher','source','method','directly_comparable','availability_note']
         fields += ['local_percent: '+s['label'] for s in summaries]
@@ -207,5 +207,5 @@ def generate(folder, sources=None):
     lines += [f'{pct(s["macro_accuracy"]):>6} | {pct(s["accuracy"]):>6} | {s["answered"]}/{s["planned"]} | {s["label"]}' + ('' if s['complete'] else ' [incomplete]') for s in summaries]
     lines += ['', 'Original-model references (context only; different evaluation protocols):']
     lines += [f'{r["group"]}: {r["score_percent"]:.2f}% ({r["weight_precision"]}); {r["source"]}' if r['available'] else r['group']+': not available — '+r['reason'] for r in refs['rows']]
-    (folder / 'report.txt').write_text('\n'.join(lines)+'\n')
+    (folder / 'report.txt').write_text('\n'.join(lines)+'\n', encoding='utf-8')
     return summary

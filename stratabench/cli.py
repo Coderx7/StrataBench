@@ -20,12 +20,12 @@ def initialize(root=None):
     state = settings()
     if root:
         state['strata_root'] = str(Path(root).expanduser().resolve())
-    source = Path(state['strata_root'])
-    if not (source / 'serve/server.py').exists():
-        raise ValueError('Strata was not found. Run ./bench init --strata-root /path/to/Strata')
     save_settings(state)
-    if not state['versions']:
-        versions.snapshot()
+    if not state['versions'] and state.get('strata_root'):
+        from .acquisition import preferences
+        cfg = preferences(state)
+        if cfg['method'] == 'local':
+            versions.snapshot(source=cfg['folder'] or state['strata_root'])
     return settings()
 
 
@@ -89,7 +89,10 @@ def doctor():
     hw = hardware()
     print('GPU:', hw['gpu']['output'])
     print('RAM:', json.dumps(hw['ram']))
-    py = str(Path(state['strata_root']) / '.venv/bin/python')
+    from .acquisition import preferences
+    from .platforms import find_python
+    cfg = preferences(state)
+    py = next((v['python'] for v in state['versions'].values()), None) or find_python(cfg['folder'] or None, cfg['python'] or None)
     check = capture([py, '-c', 'import jinja2, regex, numpy; print("Strata Python dependencies are available")'])
     print(check['output'])
     for name in ('cmake', 'nvcc', 'git'):
@@ -104,7 +107,7 @@ def doctor():
 
 def cases_for(profile, seed, only=None, context_words=None, task_file=None):
     if task_file:
-        cases = [json.loads(line) for line in Path(task_file).read_text().splitlines() if line.strip()]
+        cases = [json.loads(line) for line in Path(task_file).read_text(encoding='utf-8-sig').splitlines() if line.strip()]
         if not cases or len({x['id'] for x in cases}) != len(cases):
             raise ValueError('Custom cases need unique ids and at least one question.')
         for c in cases:
@@ -135,7 +138,7 @@ def show_plan(cases, targets, options):
 
 
 def execute(args):
-    state = initialize()
+    state = settings() if args.endpoint else initialize()
     effort = args.reasoning
     if effort is None:
         effort = ask_reasoning() if sys.stdin.isatty() else 'xhigh'
@@ -271,11 +274,23 @@ def parser():
     sub.add_parser('versions', help='List prepared versions')
     sub.add_parser('doctor', help='Read-only check of GPU, Python and build tools')
     sub.add_parser('datasets', help='Download/cache public datasets once')
-    q = sub.add_parser('add-version', help='Build an isolated release for RTX 3080; never install packages')
+    q = sub.add_parser('add-version', help='Prepare a version using the configured Strata source')
     q.add_argument('tag')
-    q.add_argument('--jobs', type=int, default=4)
+    q.add_argument('--jobs', type=int)
     q.add_argument('--python')
     q.add_argument('--cmake-arg', action='append', default=[], help='Example: --cmake-arg=-DFOO=ON')
+    q = sub.add_parser('source', help='Show or configure Strata acquisition settings')
+    q.add_argument('--method', choices=['local','repository','folder','release'])
+    q.add_argument('--repository')
+    q.add_argument('--folder')
+    q.add_argument('--config-folder')
+    q.add_argument('--python')
+    q.add_argument('--python-mode', choices=['managed','existing'])
+    q.add_argument('--backend', choices=['cuda12','cuda13','hip','sycl'])
+    q.add_argument('--asset')
+    q.add_argument('--cuda-architectures')
+    q.add_argument('--build-jobs', type=int)
+    q.add_argument('--allow-unverified', action=argparse.BooleanOptionalAction, default=None)
     q = sub.add_parser('snapshot', help='Copy a separately built engine and its matching server')
     q.add_argument('--name', required=True)
     q.add_argument('--source', required=True)
@@ -332,6 +347,12 @@ def main():
             with local_lock('.prepare.lock'):
                 initialize(args.strata_root)
             show_configs()
+        elif args.command == 'source':
+            from .acquisition import configure, preferences
+            data = {k:v for k,v in vars(args).items() if k != 'command' and v is not None}
+            with local_lock('.prepare.lock'):
+                cfg = configure(data) if data else preferences()
+            print(json.dumps(cfg,indent=2))
         elif args.command == 'configs':
             show_configs()
         elif args.command == 'versions':
@@ -345,8 +366,7 @@ def main():
             print(f'{len(cases)} public cases ready.')
         elif args.command == 'add-version':
             with local_lock('.prepare.lock'):
-                initialize()
-                if args.jobs < 1:
+                if args.jobs is not None and args.jobs < 1:
                     raise ValueError('Build jobs must be positive.')
                 versions.build(args.tag, args.jobs, args.cmake_arg, args.python)
         elif args.command == 'snapshot':

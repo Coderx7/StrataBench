@@ -1,0 +1,3 @@
+{"id":"my-task-001","group":"my_work","difficulty":"easy","prompt":"An order contains 18 boxes with 24 items per box. How many items are there?","answer":432,"grader":"numeric"}
+{"id":"my-task-002","group":"my_work","difficulty":"medium","prompt":"Choose the only prime number. (A) 21 (B) 23 (C) 27 (D) 33","answer":"B","grader":"choice"}
+{"id":"my-task-003","group":"my_work","difficulty":"hard","prompt":"Return the following records sorted by score descending, breaking ties by name ascending. Your answer must be a list of names. Records: [{\"name\":\"Zoe\",\"score\":8},{\"name\":\"Ava\",\"score\":8},{\"name\":\"Mia\",\"score\":9}]","answer":["Mia","Ava","Zoe"],"grader":"json"}

@@ -5,12 +5,13 @@ import datetime as dt
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import subprocess
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_STRATA = Path('/media/hossein/SSD/strarta_stuff/Strata')
+DEFAULT_STRATA = os.environ.get('STRATABENCH_STRATA_ROOT', '')
 STATE = ROOT / 'settings.json'
 
 
@@ -44,8 +45,11 @@ def write_json(path, value):
 
 
 def settings():
-    return read_json(STATE) if STATE.exists() else {
-        'strata_root': str(DEFAULT_STRATA), 'versions': {}, 'default_reasoning': 'xhigh'}
+    state = read_json(STATE) if STATE.exists() else {}
+    state.setdefault('strata_root', str(DEFAULT_STRATA))
+    state.setdefault('versions', {})
+    state.setdefault('default_reasoning', 'xhigh')
+    return state
 
 
 def save_settings(value):
@@ -53,9 +57,10 @@ def save_settings(value):
 
 
 def capture(cmd, cwd=None, timeout=20):
+    from .platforms import quiet_options
     try:
         p = subprocess.run(cmd, cwd=cwd, text=True, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT, timeout=timeout)
+                           stderr=subprocess.STDOUT, encoding='utf-8', errors='replace', timeout=timeout, **quiet_options())
         return {'ok': p.returncode == 0, 'output': p.stdout.strip(), 'code': p.returncode}
     except (OSError, subprocess.TimeoutExpired) as e:
         return {'ok': False, 'output': str(e)}
@@ -80,17 +85,20 @@ def request_json(url, body=None, timeout=60, api_key=None):
 @contextlib.contextmanager
 def local_lock(name):
     """OS-owned locks release on crashes; no stale lock cleanup is needed."""
-    import fcntl
+    from .platforms import lock_file
     path = ROOT / name
-    with path.open('a') as f:
+    with path.open('a+b') as f:
+        if path.stat().st_size == 0:
+            f.write(b'0')
+            f.flush()
         try:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            lock_file(f)
+        except OSError:
             raise RuntimeError('Another StrataBench operation is running. Let it finish first.') from None
         try:
             yield
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            lock_file(f, unlock=True)
 
 
 def hardware():
@@ -102,5 +110,12 @@ def hardware():
                    if line.startswith(('MemTotal:', 'MemAvailable:')))
     except OSError:
         pass
+    if os.name == 'nt':
+        import ctypes
+        class MemoryStatus(ctypes.Structure):
+            _fields_ = [('length',ctypes.c_ulong),('load',ctypes.c_ulong)] + [(name,ctypes.c_ulonglong) for name in ('total','available','page_total','page_available','virtual_total','virtual_available','extended')]
+        info = MemoryStatus(); info.length = ctypes.sizeof(info)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(info)):
+            ram = {'MemTotal': f'{info.total//1024} kB', 'MemAvailable': f'{info.available//1024} kB'}
     return {'gpu': gpu, 'ram': ram, 'cpu_count': os.cpu_count(),
-            'platform': capture(['uname', '-srmo'])['output']}
+            'platform': platform.platform()}
