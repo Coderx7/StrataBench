@@ -2,7 +2,15 @@
 
 Compare **Strata versions × model configurations** on the same questions, then inspect the answers behind each score. StrataBench runs on your own computer, provides a browser GUI, and saves enough information to repeat or resume a comparison.
 
-The interface and benchmark runner use Python’s standard library. There is no Node.js setup, web build step, cloud account, or paid judging service for the standard suites. Writing-quality judging is an optional, separately configured feature. Strata itself has separate runtime dependencies and hardware requirements.
+The interface and benchmark runner use Python’s standard library. There is no Node.js setup, web build step or required cloud account. Most suites score locally; WritingBench requires a separately configured model judge, and the diagnostic Writing style suite can optionally use one. A judge can be local or remote. Standard benchmark evaluators and Strata itself have their own dependencies, which are explained below.
+
+## Why I built this
+
+I wanted to find out which model and configuration actually worked best on my own system. Strata kept getting updates and optimizations, and on my setup I noticed that some versions made the model faster while its answers got worse. Speed alone was not telling me which version/config combination to keep.
+
+Instead of carrying on with ad hoc prompt testing, I fired up my clanker and built this benchmark suite to test each Strata version with a given model config in a consistent, repeatable way. It uses several established benchmarks alongside smaller diagnostic suites, runs the same questions across the selected combinations, and lets me inspect the answers behind the scores. The goal is a clearer picture of how an LLM performs on **your hardware, with your settings**, so you can weigh answer quality against speed and pick the combination that works best for you.
+
+I built this for myself on Linux, using an RTX 3080 with 10 GB VRAM and 64 GB of system RAM. I added Windows support, including launchers and platform-specific handling, but **I have never tested it on Windows**.
 
 ## Quick start
 
@@ -19,6 +27,8 @@ The interface and benchmark runner use Python’s standard library. There is no 
 4. On first launch, the welcome window explains setup. Choose **Configure Strata** to open **Your setup**, then follow the three-step checklist. Existing installations with prepared versions keep their normal startup.
 5. Prepare one version, then select or import a model configuration in **New benchmark**.
 6. Start with **Smoke test**, confirm the reasoning setting, and run it. Then move to a larger suite.
+
+**Platform status:** The app has been used on Linux. Windows instructions describe the intended workflow; I have not verified it on Windows.
 
 On Windows, use **Extract All** before launching. If Explorer hides file extensions, `start.bat` may appear as **start**, with type **Windows Batch File**. The launcher is in the project’s top-level folder, not inside `stratabench/` or `stratabench/web/`. It also supports installations where only `py` or `python` is on PATH.
 
@@ -147,10 +157,33 @@ A Strata configuration includes `exe`, `cwd`, and an `args` array, plus the fiel
 1. Open **Strata versions**, prepare any additional versions, and choose the ordering. Numeric version sorting and custom ordering are available; drag tiles or use **Move earlier/later**.
 2. Open **New benchmark**, select versions and model configs, and choose a suite.
 3. Confirm **Reasoning effort**. The default is **xhigh**; off, low, medium, high, xhigh and server/config defaults are available.
-4. Set repeats and, if needed, advanced seed, temperature, answer-token budget and timeouts.
-5. Choose **Start benchmark**.
+4. Under **Reasoning & repetition**, keep **Use default thinking budgets** checked, or uncheck it to edit the thinking tokens for each difficulty. Defaults remain visible beside each field. Choose **Apply budgets** after editing.
+5. If a budget does not fit a selected config, review the warning. **Apply budgets & deselect … incompatible configs** accepts the values and removes only those selections. Select another config if none remain.
+6. Set repeats and, if needed, advanced seed, temperature, overall answer-token limit and timeouts. Review the total time range; click **Time by configuration** for the breakdown. It stays open through refreshes and plan changes until you close it.
+7. Choose **Start benchmark**. Applied budgets are saved with the run and used again when you resume it.
 
-The runner evaluates one version/config combination and one question at a time. Each managed combination gets a fresh server session and the same unscored warm-up. Standard suites are graded locally. When you enable the optional writing judge, only that suite’s writing brief and response are sent to the judge endpoint you configure.
+The runner evaluates one version/config combination and one question at a time. Each managed combination gets a fresh server session and the same unscored warm-up. Deterministic grading runs locally. WritingBench requires your configured judge; the diagnostic Writing style suite uses one only when enabled. Judge requests include the writing brief, response and applicable rubric.
+
+### Thinking budgets and config capacity
+
+In **New benchmark → Reasoning & repetition**, **Use default thinking budgets** is checked initially. Every field shows the app’s default. Uncheck it to edit the values, then click **Apply budgets**. Reasoning effort (xhigh by default) and thinking-token caps are separate controls.
+
+| Difficulty | Default thinking tokens | Automatic total generation tokens |
+| --- | ---: | ---: |
+| Easy | 1,024 | 2,048 |
+| Medium | 3,072 | 4,096 |
+| Hard | 7,168 | 8,192 |
+| Very hard | 11,264 | 12,288 |
+| Extreme | 15,360 | 16,384 |
+| Original benchmark category (standard suites) | 7,168 | 8,192 |
+
+These are StrataBench defaults, not a claim about the model publisher’s evaluation settings. Tool use, agentic coding and SWE-bench default to at most 3,072 thinking tokens and 4,096 total tokens **per model turn** (Easy remains 1,024/2,048). Standard suites retain their original categories; their **Original benchmark category** field controls all questions rather than inventing difficulty ratings.
+
+Custom caps accept positive whole numbers up to 1,000,000. Automatic total generation allows the chosen thinking cap plus 1,024 tokens for answer/wrap-up, including for agent tasks. An explicit **Answer token limit** overrides that automatic total; custom thinking must remain below it. Default thinking caps adapt to a smaller overall limit to leave answer space. **Reasoning Off** disables thinking, ignores the configured thinking caps, and keeps the ordinary total output limits. Requests use Strata’s `reasoning_budget_tokens`; the overall `max_tokens` limit still includes thinking and the final answer.
+
+The app checks the **selected configs** against the budgets for the actual difficulty levels in the selected suite. It reads the config’s `--max-context` declaration; config-level `max_tokens` and `reasoning_budget_tokens` are defaults, not hard capacity limits. Checks allow another 1,024 prompt tokens. A warning lists each incompatible config and the required/available capacity. Editing does not change selections. **Apply budgets & deselect … incompatible configs** accepts the new budgets and removes just those selections; compatible configs remain selected. If none remain, select a compatible config before starting. Unknown context sizes are reported and stay selected. Long prompts, images and multi-turn histories can need more space than this planning allowance, so Strata also checks the actual request at runtime. The server and command-line runner repeat the capacity check before starting a benchmark.
+
+Applied budgets are saved with the run and preserved by Resume. They also affect the time estimates. Timing history must match both the thinking cap and total output limit.
 
 ### Suites and difficulty
 
@@ -214,26 +247,15 @@ Docker must be running in **Linux-container mode** on Linux or Windows; Windows 
 
 If image preparation fails or storage is insufficient, the run stops with saved diagnostics. Resume requires the original image IDs to remain available. There is no host-execution fallback. Only the app’s own labelled task containers are cleaned up.
 
-**Thinking budgets:** In **New benchmark → Reasoning & repetition**, **Use default thinking budgets** is checked initially. Every field shows the app’s default. Uncheck it to edit the values, then click **Apply budgets**. Reasoning effort (xhigh by default) and thinking-token caps are separate controls.
+### Time estimates
 
-| Difficulty | Default thinking tokens | Automatic total generation tokens |
-| --- | ---: | ---: |
-| Easy | 1,024 | 2,048 |
-| Medium | 3,072 | 4,096 |
-| Hard | 7,168 | 8,192 |
-| Very hard | 11,264 | 12,288 |
-| Extreme | 15,360 | 16,384 |
-| Original benchmark category (standard suites) | 7,168 | 8,192 |
+The app shows a time range for each suite, each configuration and the whole comparison. Click **Time by configuration** to expand the breakdown. It stays open across automatic refreshes and plan changes until you close it.
 
-These are StrataBench defaults, not a claim about the model publisher’s evaluation settings. Tool use, agentic coding and SWE-bench default to at most 3,072 thinking tokens and 4,096 total tokens **per model turn** (Easy remains 1,024/2,048). Standard suites retain their original categories; their **Original benchmark category** field controls all questions rather than inventing difficulty ratings.
+These are approximate wall-clock ranges, including model loading, warm-up and thinking. Builds, downloads, evaluator installation and SWE-bench image preparation are excluded. Unmeasured estimates use an RTX 3080 / 64 GB planning baseline; other hardware can differ substantially. Observed timings for the same version, config, reasoning effort, thinking cap and total output limit improve estimates. Reasoning can make hard questions take much longer than easy ones. Changing a budget requires applying it before it is used in the run or its estimates.
 
-Custom caps accept positive whole numbers up to 1,000,000. Automatic total generation allows the chosen thinking cap plus 1,024 tokens for answer/wrap-up, including for agent tasks. An explicit **Answer token limit** overrides that automatic total; custom thinking must remain below it. Default thinking caps adapt to a smaller overall limit to leave answer space. **Reasoning Off** disables thinking, ignores the configured thinking caps, and keeps the ordinary total output limits. Requests use Strata’s `reasoning_budget_tokens`; the overall `max_tokens` limit still includes thinking and the final answer.
+### Diagnostic datasets and context lengths
 
-The app checks the **selected configs** against the budgets for the actual difficulty levels in the selected suite. It reads the config’s `--max-context` declaration; config-level `max_tokens` and `reasoning_budget_tokens` are defaults, not hard capacity limits. Checks allow another 1,024 prompt tokens. A warning lists each incompatible config and the required/available capacity. Editing does not change selections. **Apply budgets & deselect … incompatible configs** accepts the new budgets and removes just those selections; compatible configs remain selected. If none remain, select a compatible config before starting. Unknown context sizes are reported and stay selected. Long prompts, images and multi-turn histories can need more space than this planning allowance, so Strata also checks the actual request at runtime. The server and command-line runner repeat the capacity check before starting a benchmark.
-
-Applied budgets are saved with the run, used in time estimates and preserved by Resume. Timing history must match both the thinking cap and total output limit. **Time by configuration** stays expanded across automatic refreshes and plan changes until you close it.
-
-Default counts depend on the pinned dataset selection and difficulty filters. Long-context sizes are **words**, not tokens, and must fit the selected model configuration. The app shows a time range per configuration and for the whole matrix. Unmeasured estimates use an RTX 3080 / 64 GB planning baseline; other hardware can differ substantially. Observed timings for the same version/config/reasoning/budget improve estimates. Reasoning can make hard questions take much longer than easy ones.
+Default counts depend on the pinned dataset selection and difficulty filters. Long-context sizes are **words**, not tokens, and must fit the selected model configuration.
 
 Included public tasks are GSM8K, OpenBookQA, eight BIG-Bench Hard tasks, the numeric/text-only subset of MATH-500, and AIME 2024. Generated tasks cover arithmetic, JSON transformations, Python tracing, graphs, combinatorics, exact scheduling, Persian arithmetic and long-context retrieval. Difficulty labels are heuristic.
 
@@ -251,7 +273,7 @@ These results are **local protocol scores**, not official leaderboard replicatio
 
 ### Writing, vision, tools and agentic coding
 
-These four suites are **original StrataBench diagnostics**, separate from the existing accuracy suite. They are not official IFEval, BFCL, SWE-bench or general vision benchmark scores. Their difficulty tiers are relative to these small diagnostic tasks. The [IFEval work](https://github.com/google-research/google-research/tree/master/instruction_following_eval) provides background on verifiable instruction-following; the [Berkeley Function Calling Leaderboard](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard) provides background on tool-call evaluation. This app does not copy their datasets or claim their scores.
+These four suites are **original StrataBench diagnostics**, separate from the existing accuracy suite. They are not official IFEval, BFCL, SWE-bench or general vision benchmark scores. Their difficulty tiers are relative to these small diagnostic tasks. The [IFEval work](https://github.com/google-research/google-research/tree/master/instruction_following_eval) provides background on verifiable instruction-following; the [Berkeley Function Calling Leaderboard](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard) provides background on tool-call evaluation. These diagnostic suites do not use those datasets or report their scores; use the separate standard benchmark library integrations for IFEval and BFCL.
 
 **Writing style:** strict correctness means every explicit rule passes. A separate constraint-compliance score shows the fraction of rules satisfied. Rules cover word ranges, titles, list structure, required phrases, forbidden wording, sentence length and text blocks. These checks do not establish that prose is natural, persuasive or artistically good.
 
@@ -347,9 +369,9 @@ python -m stratabench report "/path/to/results/RUN_ID"
 python -m stratabench compare "/path/to/results/RUN_A" "/path/to/results/RUN_B"
 ```
 
-For Windows paths, use values such as `"C:\Models\Strata"`, `"C:\Python312\python.exe"` and `"C:\Models\venv\Scripts\python.exe"`. The commands themselves are the same; no Bash environment is required.
+For Windows paths, use values such as `"C:\Models\Strata"`, `"C:\Python312\python.exe"` and `"C:\Models\venv\Scripts\python.exe"`. No Bash environment is required; use the quoting rules of your shell, especially for JSON arguments.
 
-Advanced runs accept `--thinking-budgets '{"easy":1024,"hard":12000,"extreme":24000}'` (omitted levels use app defaults), `--max-tokens`, `--timeout`, `--startup-timeout`, `--temperature`, `--seed`, `--only`, `--context-words`, `--tasks`, `--port` and `--dry-run`. Capability suites also support `--agent-turns`, `--coding-image`, `--style-judge-endpoint` and `--style-judge-model`. `python -m stratabench run --help` lists them. Source preparation also accepts `--jobs`, `--python` and repeated `--cmake-arg=-DNAME=value` options.
+For example, Bash accepts `--thinking-budgets '{"easy":1024,"hard":12000,"extreme":24000}'` (omitted levels use app defaults). On Windows, the GUI avoids having to quote JSON for your shell. Advanced runs also accept `--max-tokens`, `--timeout`, `--startup-timeout`, `--temperature`, `--seed`, `--only`, `--context-words`, `--tasks`, `--port` and `--dry-run`. Capability suites also support `--agent-turns`, `--coding-image`, `--style-judge-endpoint` and `--style-judge-model`. `python -m stratabench run --help` lists them. Source preparation also accepts `--jobs`, `--python` and repeated `--cmake-arg=-DNAME=value` options.
 
 Standard-suite commands are optional; the GUI provides the same controls:
 
@@ -387,6 +409,10 @@ External endpoints are not started or stopped by StrataBench. Their version/conf
 | Version label already exists | Use that prepared version or select another label for a distinct build. It is not overwritten. |
 | Run cannot resume after an update | Return to the original StrataBench revision and original inputs/settings, or start a new run. Do not edit a manifest to bypass identity checks. |
 | Long-context test gets a context error | Reduce context words or answer-token budget, or use a config with sufficient context capacity. |
+| A thinking-budget warning names selected configs | Reduce the relevant budget, or choose **Apply budgets & deselect … incompatible configs** to keep the new values with compatible configs only. |
+| Start is disabled after editing a thinking budget | Apply the values, resolve any invalid-number/overall-limit errors, and make sure a compatible config and prepared version remain selected. |
+| A config passes the budget check but a request gets a context error | The planning check reserves 1,024 prompt tokens. Long prompts, images or conversation history can need more; reduce prompt/context length or generation budgets. |
+| Time by configuration still closes by itself after updating | Refresh the browser page to load the updated interface assets. |
 | Other hardware is slower than the estimate | Start with smoke/quick and let matching local timing history accumulate. Unmeasured ranges are planning estimates. |
 
 ## Development and repository contents
@@ -396,6 +422,7 @@ stratabench/                 Python runner, scoring, acquisition and local GUI s
 stratabench/web/             Bundled interface assets; no frontend build required
 stratabench/acquisition.py   Local/Git/release preparation and source settings
 stratabench/platforms.py     Linux/Windows process, lock and path adapters
+stratabench/budgets.py       Thinking caps, total output limits and config capacity checks
 examples/custom-tasks.jsonl  Sample user questions
 datasets/                   Source lock and original-model reference catalog
 versions/                   Local source exports, engines, Python environments and caches (ignored)
@@ -409,7 +436,7 @@ Run the checks with:
 python -m unittest discover -s tests -v
 ```
 
-The suite uses temporary files and local fake API servers; it does not download model weights or need a GPU/compiler. The tests include persisted source settings, first-run guidance, both inspector layouts, generated capability cases, tool orchestration and optional-judge separation. Native batch-launcher checks run on Windows. For actual container checks with an already prepared image, set `STRATABENCH_DOCKER_TEST_IMAGE=python:3.12-slim` when running tests; these checks do not pull images automatically. The optional cached-public-data check is skipped when the raw dataset cache is absent. GitHub Actions is configured for Linux and Windows with Python 3.11, 3.12 and 3.13. Native GPU/driver/Strata integration still depends on the selected engine package and machine.
+The suite uses temporary files and local fake API servers; it does not download model weights or need a GPU/compiler. The tests include persisted source settings, first-run guidance, both inspector layouts, generated capability cases, tool orchestration, optional-judge separation, thinking-budget validation and capacity checks, budget-preserving resume, and persistent time-detail controls. Native batch-launcher checks run on Windows. For actual container checks with an already prepared image, set `STRATABENCH_DOCKER_TEST_IMAGE=python:3.12-slim` when running tests; these checks do not pull images automatically. The optional cached-public-data check is skipped when the raw dataset cache is absent. GitHub Actions is configured for Linux and Windows with Python 3.11, 3.12 and 3.13. Windows remains untested by me; the CI configuration does not establish that Windows checks have passed or that native GPU/driver/Strata integration works on a particular machine.
 
 For interface syntax checks, Node is optional:
 
@@ -418,6 +445,7 @@ node --check stratabench/web/app.js
 node --check stratabench/web/setup.js
 node --check stratabench/web/outcomes.js
 node --check stratabench/web/helpers.js
+node --check stratabench/web/budgets.js
 ```
 
 Local settings, model files, downloaded binaries, virtual environments, runtime credentials, logs, the default benchmark download folder and benchmark results are excluded from Git. Public source URLs and upstream references are retained for reproducibility. No benchmark output is uploaded by default. Enabling a writing judge sends that writing brief and response to its configured endpoint. Dataset downloads, Git source retrieval, release downloads and isolated Python package installation are the network operations used during preparation. For development or an isolated test installation, `STRATABENCH_SETTINGS_FILE` can point to a separate settings file; app workers inherit the same file automatically.
