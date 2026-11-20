@@ -304,6 +304,48 @@ if(!calls.includes('/api/state'))throw Error('Application startup never reached 
         self.assertNotEqual(path, source)
         self.assertEqual(source.read_bytes(), original)
 
+    def test_log_flush_failure_does_not_leave_worker_marked_running(self):
+        proc=mock.Mock(stdout=io.StringIO('RuntimeError: engine unavailable\n'),returncode=1)
+        writer=mock.Mock();writer.close.side_effect=OSError('Disk full')
+        path=mock.Mock();path.open.return_value=writer
+        job={'id':'b'*32,'kind':'run','state':'running','started_at':time.time(),'logs':[]}
+        self.app.proc=proc
+        self.app.watch(proc,job,path)
+        self.assertIsNone(self.app.proc)
+        self.assertEqual(job['state'],'failed')
+        self.assertEqual(job['log_error'],'Disk full')
+        self.assertIn('engine unavailable',job['failure_reason'])
+        saved=gui.diagnostics.saved_jobs(self.root)[0]
+        self.assertEqual(saved['log_error'],'Disk full')
+
+    def test_failed_worker_persists_full_redacted_log_and_clickable_details(self):
+        secret='fixture-secret-credential'
+        (self.root/'bench').write_text('import sys\nprint("first saved line")\n'
+            'print("fixture-secret-credential")\n'
+            'for i in range(420): print("activity line",i)\n'
+            'print("RuntimeError: CUDA out of memory",file=sys.stderr)\nsys.exit(1)\n',encoding='utf-8')
+        response=self.app.start('run',[],'Benchmark in progress',env_overrides={'STRATABENCH_JUDGE_API_KEY':secret})
+        deadline=time.monotonic()+10
+        while self.app.proc is not None and time.monotonic()<deadline:time.sleep(.02)
+        self.assertEqual(self.app.job['state'],'failed',self.app.job['logs'])
+        self.assertIn('CUDA out of memory',self.app.job['failure_reason'])
+        self.assertNotIn('first saved line',self.app.job['logs'])
+        with self.request('/api/diagnostics',{'job':response['job_id']}) as stream:data=json.load(stream)
+        self.assertIn('CUDA out of memory',data['reason']);self.assertEqual(len(data['logs']),1)
+        source=data['logs'][0]
+        with self.request('/api/diagnostic-log',{'job':response['job_id'],'log':source['id']}) as stream:preview=json.load(stream)
+        self.assertIn('first saved line',preview['text']);self.assertNotIn(secret,preview['text'])
+        url=f'/api/diagnostic-log/download?job={response["job_id"]}&log={source["id"]}'
+        with self.request(url) as stream:
+            self.assertIn('attachment',stream.headers['Content-Disposition'])
+            full=stream.read().decode('utf-8')
+        self.assertIn('first saved line',full);self.assertNotIn(secret,full)
+        restarted=gui.App()
+        self.assertEqual(restarted.state()['failed_operations'][0]['id'],response['job_id'])
+        with self.assertRaises(urllib.error.HTTPError):self.request(url,auth=False)
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/diagnostics',{'job':response['job_id']},csrf=False)
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/diagnostic-log',{'job':response['job_id'],'log':'../../settings.json'})
+
     def test_background_job_progress_and_safe_stop(self):
         script = self.root / 'bench'
         script.write_text('import time\nprint("2 questions × 1 repeat(s) × 1 combination(s).",flush=True)\n'

@@ -319,7 +319,7 @@ def run(cases, targets, options, resume=None):
                             label = 'ERROR' if row.get('error') else 'RATED' if row['correct'] is None else 'PASS' if row['correct'] else 'FAIL'
                             print(f'  {len(done)}/{total} {label:5s} {c["id"]} ({row["elapsed_seconds"]:.1f}s)', flush=True)
                             if fatal or errors >= 3:
-                                raise RuntimeError('Stopping this combination after a server failure; saved answers can be resumed.')
+                                raise RuntimeError('Stopping this combination after a server failure; saved answers can be resumed. '+row.get('error',''))
                     judge_pending=any(r.get('standard_result',{}).get('judge_error') for r in latest.values())
                     status.update(state='incomplete' if judge_pending else 'complete', finished=stamp())
             except (OSError, ValueError, RuntimeError, http.client.HTTPException) as e:

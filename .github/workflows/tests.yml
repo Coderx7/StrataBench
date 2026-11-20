@@ -39,3 +39,4 @@ jobs:
       - run: node --check stratabench/web/outcomes.js
       - run: node --check stratabench/web/helpers.js
       - run: node --check stratabench/web/budgets.js
+      - run: node --check stratabench/web/diagnostics.js

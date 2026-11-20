@@ -315,6 +315,14 @@ Tool/coding suites have a configurable maximum model-turn count (default 8). The
 
 The included Qwen3.8-Flash-Next GSM8K reference is labeled **BF16**, with its independent evaluation method and a **Context only** comparison label. BF16 is distinct from FP16, FP32 and INT8. The reference catalog does not assert that a small local subset, xhigh reasoning or a local quantized model reproduces that published evaluation. References also appear in reports and a separate CSV.
 
+## Failed benchmarks and logs
+
+Click a benchmark’s **status** in **Activity**, **Results**, or the **Test explorer** to open **Error details & logs**. Failed and unfinished runs show a short reason beside the status. The details window lists saved startup/combination errors, the latest request or judge failures for each test, and available activity, Strata server and engine logs. Incorrect answers and token cutoffs remain separate test outcomes; inspect their counts to compare the response with its reference answer.
+
+Choose a file in **Saved log**, then use **Refresh log** for newer output. The viewer previews up to the last 256 KB and tells you when it is truncated. **Download full log** retrieves the complete saved file. Identifiable credentials are redacted from displayed/downloaded logs; captured activity also removes the worker’s known runtime secrets before saving.
+
+New operations save their full activity output and a small status record under the ignored `.jobs/` folder. **Launch & preparation errors** remain accessible from Activity and Results after restarting the app, including failures before a benchmark manifest could be created. Older runs can still expose their saved errors and server/engine logs, but activity output that was never recorded cannot be recovered. Completed resumed runs identify earlier-attempt errors as historical evidence.
+
 ## Stop, resume and keep results
 
 - Closing the browser tab does not stop a running benchmark. Reopen the launcher to reconnect.
@@ -447,6 +455,7 @@ examples/custom-tasks.jsonl  Sample user questions
 datasets/                   Source lock and original-model reference catalog
 versions/                   Local source exports, engines, Python environments and caches (ignored)
 results/                    Local benchmark output (ignored)
+.jobs/                      Saved operation status and full activity logs (ignored)
 settings.json               Machine-specific preferences and registered versions (ignored)
 ```
 
@@ -468,6 +477,7 @@ node --check stratabench/web/setup.js
 node --check stratabench/web/outcomes.js
 node --check stratabench/web/helpers.js
 node --check stratabench/web/budgets.js
+node --check stratabench/web/diagnostics.js
 ```
 
 Local settings, model files, downloaded binaries, virtual environments, runtime credentials, logs, the default benchmark download folder and benchmark results are excluded from Git. Public source URLs and upstream references are retained for reproducibility. No benchmark output is uploaded by default. Enabling a writing judge sends that writing brief and response to its configured endpoint. Dataset downloads, Git source retrieval, release downloads and isolated Python package installation are the network operations used during preparation. For development or an isolated test installation, `STRATABENCH_SETTINGS_FILE` can point to a separate settings file; app workers inherit the same file automatically.

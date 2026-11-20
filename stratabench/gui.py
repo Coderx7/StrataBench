@@ -17,7 +17,7 @@ import subprocess
 import sys
 import threading
 import time
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 import uuid
 import webbrowser
 
@@ -29,7 +29,7 @@ from .estimates import TimingHistory
 from .platforms import is_locked, process_options, stop_tree, windows, find_python
 from . import acquisition
 from . import standard_suites
-from . import common
+from . import common, diagnostics
 
 ASSETS = ROOT / 'stratabench' / 'web'
 INSTANCE = ROOT / '.gui-instance.json'
@@ -303,6 +303,7 @@ class App:
                 'resumable': not active and (remaining > 0 or manifest['status'] != 'complete'),
                 'resume_blocked': locked,
                 'status': 'interrupted' if manifest['status'] == 'running' and not active else manifest['status']}
+            result['failure_reason']=diagnostics.run_reason(manifest,counts,active)
             if summary_only:
                 return result
             if data.get('key') is not None:
@@ -389,6 +390,7 @@ class App:
                 'benchmark_library': standard_suites.catalog(s),
                 'benchmark_settings': standard_suites.library_settings(s),
                 'hardware': self.hardware, 'runs': runs, 'job': job,
+                'failed_operations':diagnostics.failed_operations(ROOT),
                 'references': refs, 'version_sort_mode': s.get('version_sort_mode','newest'),
                 'strata_root': s['strata_root'], 'default_reasoning': 'xhigh',
                 'strata_source': acquisition.preferences(s),
@@ -403,19 +405,41 @@ class App:
             env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
             env['STRATABENCH_SETTINGS_FILE']=str(common.STATE)
             env.update(env_overrides or {})
-            proc = subprocess.Popen([find_python(), str(ROOT / 'bench'), *command], cwd=ROOT,
-                env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding='utf-8', errors='replace', bufsize=1, **process_options())
+            secret_values=[self.token,*[v for k,v in env.items() if any(t in k.upper() for t in ('KEY','TOKEN','SECRET'))]]
+            job = {'id': uuid.uuid4().hex, 'kind': kind, 'title': title, 'state': 'running',
+                   'started_at': time.time(), 'stage': 'Preparing', 'logs': [], 'completed': 0,
+                   'passed': 0, 'failed': 0, 'errors': 0, 'total': 0, **extra}
+            folder=diagnostics.job_folder(ROOT,job['id'])
+            folder.mkdir(parents=True,exist_ok=True)
+            log_path=folder/'worker.log'
+            log_path.write_text('',encoding='utf-8')
+            self.job=job
+            diagnostics.save_job(ROOT,job,secret_values)
+            try:
+                proc = subprocess.Popen([find_python(), str(ROOT / 'bench'), *command], cwd=ROOT,
+                    env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding='utf-8', errors='replace', bufsize=1, **process_options())
+            except OSError as error:
+                message=diagnostics.redact(str(error),secret_values)
+                job.update(state='failed',stage='Could not start the worker',failure_reason=message,elapsed=time.time()-job['started_at'])
+                log_path.write_text(message+'\n',encoding='utf-8')
+                diagnostics.save_job(ROOT,job,secret_values)
+                raise
             self.proc = proc
-            self.job = {'id': uuid.uuid4().hex, 'kind': kind, 'title': title, 'state': 'running',
-                        'started_at': time.time(), 'stage': 'Preparing', 'logs': [], 'completed': 0,
-                        'passed': 0, 'failed': 0, 'errors': 0, 'total': 0, **extra}
-            threading.Thread(target=self.watch, args=(proc, self.job), daemon=True).start()
-            return {'ok': True, 'job_id': self.job['id']}
+            threading.Thread(target=self.watch, args=(proc, job, log_path, secret_values), daemon=True).start()
+            return {'ok': True, 'job_id': job['id']}
 
-    def watch(self, proc, job):
+    def watch(self, proc, job, log_path=None, secret_values=()):
+        writer=None
+        if log_path:
+            try:writer=log_path.open('a',encoding='utf-8')
+            except OSError as error:job['log_error']=str(error)
         try:
             for raw in proc.stdout:
+                raw=diagnostics.redact(raw,secret_values)
+                if writer:
+                    try:writer.write(raw);writer.flush()
+                    except OSError as error:job['log_error']=str(error)
                 line = raw.rstrip()
                 if not line:
                     continue
@@ -424,6 +448,7 @@ class App:
                     if line.startswith('Benchmark setup: '):job['stage']=line.removeprefix('Benchmark setup: ')
                     if line.startswith('Results: '):
                         job['result_id'] = Path(line[9:]).name
+                        with contextlib.suppress(OSError,ValueError):diagnostics.save_job(ROOT,job,secret_values)
                     count = re.match(r'(\d+) questions × (\d+) repeat\(s\) × (\d+) combination', line)
                     if count:
                         job['total'] = int(count[1])*int(count[2])*int(count[3])
@@ -446,6 +471,9 @@ class App:
                         job['stage'] = 'Building the engine'
             proc.wait()
         finally:
+            if writer:
+                try:writer.close()
+                except OSError as error:job['log_error']=str(error)
             proc.stdout.close()
             if job['kind'] in ('prepare-suite','check-suite') and job.get('suite') and (job['state']=='stopping' or proc.returncode!=0):
                 with contextlib.suppress(OSError,ValueError):
@@ -464,9 +492,13 @@ class App:
                         result_state = read_json(manifest_path)['status']
                         if result_state != 'complete':
                             job['state'] = 'stopped' if result_state == 'interrupted' else 'failed'
+                            job['failure_reason']=diagnostics.run_reason(read_json(manifest_path))
                 job['exit_code'] = proc.returncode
                 job['elapsed'] = time.time() - job['started_at']
                 job['stage'] = {'stopped': 'Stopped · answers saved', 'complete': 'Complete', 'failed': 'Needs attention'}[job['state']]
+                if job['state']=='failed' and not job.get('failure_reason'):
+                    job['failure_reason']=diagnostics.reason_from_log(job['logs'],proc.returncode)
+                with contextlib.suppress(OSError,ValueError):diagnostics.save_job(ROOT,job,secret_values)
                 self.proc = None
 
     def stop(self):
@@ -531,6 +563,10 @@ class App:
             return {'ok': True, 'order': ordered_names(state)}
         if route == '/api/budget-compatibility':
             return self.budget_compatibility(data)
+        if route == '/api/diagnostics':
+            return diagnostics.public_details(diagnostics.collect(ROOT,data,self.job))
+        if route == '/api/diagnostic-log':
+            return diagnostics.preview(diagnostics.log_source(ROOT,data,self.job))
         if route == '/api/estimate':
             return self.estimate(data)
         if route=='/api/optional-swebench':
@@ -795,13 +831,26 @@ def handler(app):
                     self.send(200, {'app': 'StrataBench'})
                 elif path == '/api/state':
                     self.send(200, app.state())
+                elif path == '/api/diagnostic-log/download':
+                    data={k:v[0] for k,v in parse_qs(urlsplit(self.path).query).items() if len(v)==1}
+                    source=diagnostics.log_source(ROOT,data,app.job)
+                    self.send_response(200)
+                    self.send_header('Content-Type','text/plain; charset=utf-8')
+                    self.send_header('Content-Disposition','attachment; filename="stratabench-'+source['id']+'.log"')
+                    self.send_header('Cache-Control','no-store')
+                    self.send_header('X-Content-Type-Options','nosniff')
+                    self.end_headers()
+                    with source['_path'].open(encoding='utf-8',errors='replace') as stream:
+                        for line in stream:
+                            try:self.wfile.write(diagnostics.redact(line).encode('utf-8'))
+                            except (BrokenPipeError,ConnectionResetError):break
                 elif path.startswith('/files/'):
                     parts = path.split('/')
                     if len(parts) != 4 or parts[3] not in ('report.html', 'summary.json', 'leaderboard.csv', 'reference-scores.csv', 'report.txt'):
                         raise ValueError('This report file is not available.')
                     file = result_path(parts[2]) / parts[3]
                     self.send(200, file.read_bytes(), mimetypes.guess_type(file.name)[0] or 'application/octet-stream')
-                elif path in ('/', '/app.js', '/helpers.js', '/budgets.js', '/outcomes.js', '/setup.js', '/style.css', '/icon.svg'):
+                elif path in ('/', '/app.js', '/helpers.js', '/budgets.js', '/outcomes.js', '/setup.js', '/diagnostics.js', '/style.css', '/icon.svg'):
                     file = ASSETS / ('index.html' if path == '/' else path[1:])
                     self.send(200, file.read_bytes(), mimetypes.guess_type(file.name)[0] or 'text/plain')
                 else:

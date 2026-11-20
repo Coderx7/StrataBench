@@ -4,7 +4,7 @@ function fixture(){
  const elements=new Map(),listeners=new Map(),timers=[];
  const document={addEventListener(name,fn){if(!listeners.has(name))listeners.set(name,[]);listeners.get(name).push(fn);},querySelector(q){if(!elements.has(q))elements.set(q,{dataset:{},writes:0,html:'',get innerHTML(){return this.html},set innerHTML(v){this.html=v;this.writes++},classList:{toggle(){}},setAttribute(){},addEventListener(){}});return elements.get(q)},querySelectorAll(){return []}};
  const context=vm.createContext({document,window:{addEventListener(){}},location:{protocol:'file:',hash:''},console,setTimeout(fn){timers.push(fn);return timers.length},clearTimeout(){},setInterval(){},WeakMap});
- for(const name of ['helpers','budgets','outcomes','setup','app'])vm.runInContext(fs.readFileSync(root+'/stratabench/web/'+name+'.js','utf8'),context);
+ for(const name of ['helpers','budgets','outcomes','setup','diagnostics','app'])vm.runInContext(fs.readFileSync(root+'/stratabench/web/'+name+'.js','utf8'),context);
  vm.runInContext(`state={configs:[{id:'small',context:128144},{id:'large',context:262144}],benchmark_library:[{id:'ifeval'}],profiles:[{id:'quick',name:'Quick'}],profile_counts:{quick:{easy:1,extreme:1}}};selectedConfigs=new Set(['small','large']);selectedVersions=new Set(['v1']);form.thinking_budgets=displayedThinkingDefaults();render=()=>{};updateSummary=()=>{};toast=()=>{};`,context);
  return {run(code){return vm.runInContext(code,context)},elements,listeners,timers,context};
 }
