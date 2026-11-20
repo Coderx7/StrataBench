@@ -169,7 +169,17 @@ The runner evaluates one version/config combination and one question at a time. 
 
 ### Standard benchmark library
 
-Open **Benchmark library** in the sidebar. Choose **Prepare suite** once, then **Use this suite**. Preparation downloads the pinned data and upstream scoring code and creates a private Python environment under `benchmarks/`. It does not install Python packages globally or change Strata/model files. The original diagnostic suites remain available for quick checks. **Full suite** continues to mean the existing accuracy task collection; it does not silently add standard suites or SWE-bench.
+Open **Benchmark library** in the sidebar. Everything needed to download and prepare the standard suites is available there on **Windows and Linux**; no separate terminal preparation or pre-downloaded files are required.
+
+1. Open **Library settings**. Choose a **Benchmark download folder**, or leave it empty to use `benchmarks/` inside the app folder. Full paths with spaces are supported, such as `D:\Benchmark files` on Windows or `/home/you/Benchmark files` on Linux. The app creates the folder when setup starts. Changing the folder does not move or delete existing downloads.
+2. Select which suites should appear in **New benchmark**. These choices are saved across restarts. Selection alone starts no downloads. You can also change each suite’s **Include in New benchmark** checkbox directly on its library card. SWE-bench is off by default.
+3. Click **Download & prepare** for any suite you want. The app downloads its pinned data/source and creates its private evaluator environment in the selected folder. **Activity** shows setup stages and details, with a **Stop setup** button. No model evaluation starts during this operation.
+4. Once the card says **Ready**, choose **Use this suite**. The selected suite is now available for a normal version/config comparison.
+5. Use **Check installation** to verify downloaded checksums and private evaluator dependencies without downloading anything. **Repair / reprepare** reinstalls the private evaluator and prepares the data again. A stopped or failed installation shows **Retry setup** after restarting the app; cached package/dataset downloads are reused where supported.
+
+These controls are also linked from **Your setup → Benchmark downloads & setup**. The app selects the Windows (`Scripts/python.exe`) or Linux (`bin/python`) private runtime layout automatically. It does not install Python packages globally or change Strata/model files. The original diagnostic suites remain available for quick checks. **Full suite** continues to mean the existing accuracy task collection; it does not silently add standard suites or SWE-bench. Existing downloads on this computer are reused, but new installations do not depend on them. If a download folder is moved between operating systems, choose **Repair / reprepare** to recreate the evaluator for that computer.
+
+Changing the download folder switches the library to that location. To reuse an existing library, choose its original folder. Saved benchmark results are preserved. Keep the matching downloaded suite available when resuming runs that require it.
 
 | Standard suite | Full configured coverage | Reported score |
 | --- | --- | --- |
@@ -194,8 +204,8 @@ MMMU images are stored once per selected question in the run’s `cases.json`. S
 SWE-bench is **not included in normal preparation, dataset downloads, or suite choices**. To use it:
 
 1. Open **Benchmark library**, then turn on **Include optional SWE-bench in my suite choices**. This only reveals the option and saves your preference; it downloads nothing.
-2. Choose **Prepare SWE-bench dataset & evaluator**. This downloads the small issue dataset and the isolated official evaluator environment, not the large issue images.
-3. Choose **Configure SWE-bench run**, select versions/configs, and start with a small sample. Set the model-turn budget and acceptance-test timeout as needed. The GUI defaults to 30 model turns when selecting this suite; the command-line default remains 8 unless overridden.
+2. Choose **Download & prepare** on the SWE-bench card. This downloads the small issue dataset and the isolated official evaluator environment, not the large issue images.
+3. Choose **Use this suite**, select versions/configs, and start with a small sample. Set the model-turn budget and acceptance-test timeout as needed. The GUI defaults to 30 model turns when selecting this suite; the command-line default remains 8 unless overridden.
 4. Starting the run explicitly prepares Docker images for the selected issues **before loading the model**. Each resolved immutable image ID is recorded and required on resume. The app uses upstream prebuilt x86-64 Linux images; it does not silently build unavailable images from source.
 
 Plan for **at least 120 GB free in Docker storage**, following the [official harness requirements](https://github.com/SWE-bench/SWE-bench/blob/main/docs/reference/harness.md). Your Docker data drive can differ from the app drive. Full runs can take hours or days, and images can consume substantial bandwidth and disk. A notice appears before the preparation/run controls. The app never prunes unrelated Docker images or volumes. Disabling the option hides the suite without deleting its downloads or saved results; manage retained images through Docker Desktop or your usual Docker tools.
@@ -391,6 +401,6 @@ node --check stratabench/web/outcomes.js
 node --check stratabench/web/helpers.js
 ```
 
-Local settings, model files, downloaded binaries, virtual environments, runtime credentials, logs and benchmark results are excluded from Git. Public source URLs and upstream references are retained for reproducibility. No benchmark output is uploaded by default. Enabling a writing judge sends that writing brief and response to its configured endpoint. Dataset downloads, Git source retrieval, release downloads and isolated Python package installation are the network operations used during preparation.
+Local settings, model files, downloaded binaries, virtual environments, runtime credentials, logs, the default benchmark download folder and benchmark results are excluded from Git. Public source URLs and upstream references are retained for reproducibility. No benchmark output is uploaded by default. Enabling a writing judge sends that writing brief and response to its configured endpoint. Dataset downloads, Git source retrieval, release downloads and isolated Python package installation are the network operations used during preparation. For development or an isolated test installation, `STRATABENCH_SETTINGS_FILE` can point to a separate settings file; app workers inherit the same file automatically.
 
 Strata, model weights, runtime packages and datasets retain their respective licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the licenses in prepared version sources.

@@ -12,7 +12,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_STRATA = os.environ.get('STRATABENCH_STRATA_ROOT', '')
-STATE = ROOT / 'settings.json'
+STATE = Path(os.environ.get('STRATABENCH_SETTINGS_FILE', str(ROOT / 'settings.json'))).expanduser().resolve()
 
 
 def stamp():

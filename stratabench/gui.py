@@ -29,6 +29,7 @@ from .estimates import TimingHistory
 from .platforms import is_locked, process_options, stop_tree, windows, find_python
 from . import acquisition
 from . import standard_suites
+from . import common
 
 ASSETS = ROOT / 'stratabench' / 'web'
 INSTANCE = ROOT / '.gui-instance.json'
@@ -173,7 +174,7 @@ def run_command(data, validate_judge=True):
             raise ValueError('Choose a custom question file first.')
         cmd += ['--tasks', str(ROOT / 'user-tasks' / name)]
     if profile in standard_suites.SPECS:
-        if not standard_suites.enabled(profile,version_state):raise ValueError('Enable optional SWE-bench in Your setup first.')
+        if not standard_suites.enabled(profile,version_state):raise ValueError('Enable '+standard_suites.SPECS[profile]['name']+' in Benchmark library first.')
         if type(data.get('standard_full',False)) is not bool:raise ValueError('Choose a full split or a seeded sample.')
         cmd += ['--standard-limit',str(0 if data.get('standard_full') else number(data,'standard_limit',50,1,100000))]
         if profile=='swebench':cmd += ['--swe-test-timeout',str(number(data,'swe_test_timeout',900,30,3600))]
@@ -382,6 +383,7 @@ class App:
                               'commit': s['versions'][name].get('git', '')[:12]} for name in ordered_names(s)],
                 'configs': configs, 'profiles': self.profiles, 'profile_counts': self.profile_counts,
                 'benchmark_library': standard_suites.catalog(s),
+                'benchmark_settings': standard_suites.library_settings(s),
                 'hardware': self.hardware, 'runs': runs, 'job': job,
                 'references': refs, 'version_sort_mode': s.get('version_sort_mode','newest'),
                 'strata_root': s['strata_root'], 'default_reasoning': 'xhigh',
@@ -395,6 +397,7 @@ class App:
             if self.job and self.job['state'] in ('running', 'stopping'):
                 raise ValueError('An operation is already running. Stop it or wait for it to finish.')
             env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+            env['STRATABENCH_SETTINGS_FILE']=str(common.STATE)
             env.update(env_overrides or {})
             proc = subprocess.Popen([find_python(), str(ROOT / 'bench'), *command], cwd=ROOT,
                 env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -414,6 +417,7 @@ class App:
                     continue
                 with self.lock:
                     job['logs'] = (job['logs'] + [line])[-350:]
+                    if line.startswith('Benchmark setup: '):job['stage']=line.removeprefix('Benchmark setup: ')
                     if line.startswith('Results: '):
                         job['result_id'] = Path(line[9:]).name
                     count = re.match(r'(\d+) questions × (\d+) repeat\(s\) × (\d+) combination', line)
@@ -439,6 +443,12 @@ class App:
             proc.wait()
         finally:
             proc.stdout.close()
+            if job['kind'] in ('prepare-suite','check-suite') and job.get('suite') and (job['state']=='stopping' or proc.returncode!=0):
+                with contextlib.suppress(OSError,ValueError):
+                    previous=standard_suites.operation_status(job['suite'])
+                    if previous.get('state') not in ('failed','interrupted'):
+                        standard_suites.finish_operation(job['suite'],'interrupted' if job['state']=='stopping' else 'failed',
+                            'Setup stopped. Choose Retry setup to continue.' if job['state']=='stopping' else 'Setup failed. Open Activity for details, then choose Retry setup.')
             if job['kind'] in ('run','resume') and job.get('result_id') and job['state']=='stopping':
                 with contextlib.suppress(OSError,ValueError,subprocess.SubprocessError):standard_suites.cleanup_run(job['result_id'])
             with self.lock:
@@ -519,14 +529,24 @@ class App:
             return self.estimate(data)
         if route=='/api/optional-swebench':
             if type(data.get('enabled')) is not bool:raise ValueError('Choose whether to enable SWE-bench.')
+            if benchmark_locked() or self.proc and self.proc.poll() is None:raise ValueError('Wait for the current operation before changing benchmark settings.')
             with local_lock('.prepare.lock'):
-                config=settings();config['optional_swebench']=data['enabled'];save_settings(config)
+                standard_suites.configure({'enabled_suites':{'swebench':data['enabled']}})
             return {'ok':True,'enabled':data['enabled']}
-        if route=='/api/prepare-suite':
+        if route in ('/api/benchmark-settings','/api/benchmark-suite'):
+            if benchmark_locked() or self.proc and self.proc.poll() is None:raise ValueError('Wait for the current operation before changing benchmark settings.')
+            if route.endswith('benchmark-suite'):
+                data={'enabled_suites':{data.get('suite'):data.get('enabled')}}
+            with local_lock('.prepare.lock'):
+                result=standard_suites.configure(data)
+            return {'ok':True,'settings':result}
+        if route in ('/api/prepare-suite','/api/check-suite'):
             suite=data.get('suite')
             if suite not in standard_suites.SPECS:raise ValueError('Choose a standard suite.')
-            if not standard_suites.enabled(suite):raise ValueError('Enable optional SWE-bench before preparing it.')
-            return self.start('prepare-suite',['prepare-suite',suite],'Preparing '+standard_suites.SPECS[suite]['name'])
+            if benchmark_locked():raise ValueError('Wait for the active benchmark before changing its downloaded suites.')
+            if route.endswith('prepare-suite') and suite=='swebench' and not standard_suites.enabled(suite):raise ValueError('Enable optional SWE-bench before preparing it.')
+            action='check-suite' if route.endswith('check-suite') else 'prepare-suite'
+            return self.start(action,[action,suite],('Checking ' if action=='check-suite' else 'Preparing ')+standard_suites.SPECS[suite]['name'],suite=suite)
         if route == '/api/run':
             command=run_command(data)
             if data.get('profile') in standard_suites.SPECS:standard_suites.verify(data['profile'])

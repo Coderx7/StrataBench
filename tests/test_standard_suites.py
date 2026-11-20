@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from pathlib import PureWindowsPath
 from unittest import mock
 
 from stratabench import standard_suites as suites, standard_runner, swe_runtime, report, runner, cli
@@ -12,6 +13,38 @@ from stratabench.common import read_json,write_json,file_hash
 
 
 class StandardSuiteTests(unittest.TestCase):
+    def test_private_python_layouts_match_windows_and_linux(self):
+        self.assertEqual(str(suites.python_path(PureWindowsPath('D:/Benchmark files/bfcl'),'Windows')),
+            r'D:\Benchmark files\bfcl\runtime\Scripts\python.exe')
+        self.assertEqual(suites.python_path(Path('/tmp/benchmark files/bfcl'),'Linux'),Path('/tmp/benchmark files/bfcl/runtime/bin/python'))
+
+    def test_failed_setup_is_persisted_and_offers_retry_after_restart(self):
+        with tempfile.TemporaryDirectory() as tmp,mock.patch.object(suites,'CACHE',Path(tmp)),mock.patch.object(suites,'settings',return_value={}), \
+                mock.patch.object(suites,'download'),mock.patch.object(suites.venv,'EnvBuilder') as builder:
+            builder.return_value.create.side_effect=RuntimeError('Cannot create private evaluator')
+            with self.assertRaisesRegex(RuntimeError,'private evaluator'):suites.prepare('bfcl')
+            state=next(s for s in suites.catalog({}) if s['id']=='bfcl')
+            self.assertEqual(state['status'],'failed');self.assertFalse(state['ready'])
+            self.assertIn('private evaluator',state['operation']['message'])
+            self.assertEqual(read_json(Path(tmp)/'bfcl/installation.json')['state'],'failed')
+
+    def test_interrupted_setup_is_detected_without_creating_or_downloading_files(self):
+        with tempfile.TemporaryDirectory() as tmp,mock.patch.object(suites,'CACHE',Path(tmp)),mock.patch.object(suites,'settings',return_value={}), \
+                mock.patch.object(suites,'is_locked',return_value=False),mock.patch.object(suites,'download') as download:
+            write_json(Path(tmp)/'bfcl/installation.json',{'state':'running','stage':'Preparing evaluator','step':3,'steps':6})
+            state=next(s for s in suites.catalog({}) if s['id']=='bfcl')
+            self.assertEqual(state['status'],'interrupted');self.assertIn('Retry setup',state['operation']['message'])
+            download.assert_not_called()
+
+    def test_check_installation_uses_the_private_environment_and_no_network(self):
+        with tempfile.TemporaryDirectory() as tmp,mock.patch.object(suites,'CACHE',Path(tmp)),mock.patch.object(suites,'settings',return_value={}), \
+                mock.patch.object(suites,'verify',return_value={'count':1}),mock.patch.object(suites.subprocess,'run') as run, \
+                mock.patch.object(suites,'download') as download:
+            root=Path(tmp)/'bfcl';root.mkdir()
+            suites.check('bfcl')
+            self.assertEqual(run.call_args.args[0],[str(suites.python_path(root)),'-m','pip','check'])
+            self.assertEqual(read_json(root/'installation.json')['state'],'complete');download.assert_not_called()
+
     def test_swe_is_disabled_and_never_prepared_implicitly(self):
         with tempfile.TemporaryDirectory() as tmp,mock.patch.object(suites,'CACHE',Path(tmp)), \
                 mock.patch.object(suites,'settings',return_value={}),mock.patch.object(suites,'download') as download, \

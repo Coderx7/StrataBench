@@ -22,6 +22,7 @@ class SettingsTests(unittest.TestCase):
             mock.patch.object(gui, 'ROOT', self.root),
             mock.patch.object(acquisition, 'ROOT', self.root),
             mock.patch.object(versions, 'ROOT', self.root),
+            mock.patch.object(gui.standard_suites,'CACHE',self.root/'benchmarks'),
             mock.patch.object(gui, 'hardware', return_value={'gpu': {'ok': False, 'output':'Test hardware'}, 'ram':{}, 'cpu_count':2}),
             mock.patch.object(gui.datasets, 'select', return_value=[])]
         for patch in self.patches: patch.start()
@@ -81,6 +82,67 @@ class SettingsTests(unittest.TestCase):
             start.return_value={'ok':True}
             self.request('/api/prepare-suite',{'suite':'swebench'})
             self.assertEqual(start.call_args.args[1],['prepare-suite','swebench'])
+
+    def test_fresh_benchmark_library_needs_no_prepared_machine_files(self):
+        with mock.patch.object(self.app,'start') as start,mock.patch.object(gui.standard_suites,'download') as download:
+            state=self.request('/api/state')
+        self.assertEqual(len(state['benchmark_library']),5)
+        self.assertTrue(all(not s['ready'] and s['status']=='not_installed' for s in state['benchmark_library']))
+        self.assertEqual(state['benchmark_settings']['effective_folder'],str(self.root/'benchmarks'))
+        self.assertFalse((self.root/'benchmarks').exists())
+        start.assert_not_called();download.assert_not_called()
+
+    def test_benchmark_folder_and_selection_persist_without_downloads(self):
+        chosen=self.root/'Downloads with spaces'/'benchmarks'
+        original={'versions':{},'strata_root':'','setup_welcome_seen':True,'custom_preference':'preserved'}
+        common.write_json(self.state_file,original)
+        choices={'ifeval':False,'bfcl':True,'mmmu':False,'writingbench':False,'swebench':False}
+        with mock.patch.object(self.app,'start') as start,mock.patch.object(gui.standard_suites,'download') as download:
+            self.request('/api/benchmark-settings',{'download_folder':str(chosen),'enabled_suites':choices})
+        state=gui.App().state()
+        self.assertEqual(state['benchmark_settings']['download_folder'],str(chosen))
+        self.assertEqual(state['benchmark_settings']['enabled_suites'],choices)
+        self.assertEqual([p['id'] for p in state['profiles'] if p.get('standard_suite')],['bfcl'])
+        self.assertEqual(gui.standard_suites.folder('bfcl'),chosen/'bfcl')
+        self.assertFalse(chosen.exists())
+        self.assertEqual(common.settings()['custom_preference'],'preserved')
+        start.assert_not_called();download.assert_not_called()
+        self.request('/api/benchmark-suite',{'suite':'ifeval','enabled':True})
+        self.assertTrue(gui.App().state()['benchmark_settings']['enabled_suites']['ifeval'])
+        self.request('/api/benchmark-settings',{'download_folder':''})
+        self.assertEqual(gui.standard_suites.folder('bfcl'),self.root/'benchmarks'/'bfcl')
+
+    def test_invalid_library_settings_are_atomic_and_require_authentication(self):
+        common.write_json(self.state_file,{'versions':{},'strata_root':'','preserved':True})
+        before=self.state_file.read_bytes();file=self.root/'file.txt';file.write_text('not a directory')
+        for payload in ({'download_folder':'relative/folder'},{'download_folder':str(file)},
+                {'enabled_suites':{'unknown':True}},{'enabled_suites':{'bfcl':'yes'}},
+                {'download_folder':str(self.root/'valid'),'enabled_suites':{'bfcl':None}}):
+            with self.subTest(payload=payload),self.assertRaises(urllib.error.HTTPError):self.request('/api/benchmark-settings',payload)
+            self.assertEqual(self.state_file.read_bytes(),before)
+        for route in ('/api/benchmark-settings','/api/benchmark-suite','/api/check-suite'):
+            for kwargs in ({'auth':False},{'csrf':False}):
+                with self.assertRaises(urllib.error.HTTPError):self.request(route,{'suite':'bfcl'},**kwargs)
+        self.assertEqual(self.state_file.read_bytes(),before)
+
+    def test_setup_and_check_are_started_from_authenticated_app_actions(self):
+        with mock.patch.object(self.app,'start',return_value={'ok':True}) as start:
+            for suite in ('ifeval','bfcl','mmmu','writingbench'):
+                self.request('/api/prepare-suite',{'suite':suite})
+                self.assertEqual(start.call_args.args[1],['prepare-suite',suite])
+                self.assertEqual(start.call_args.kwargs['suite'],suite)
+                self.request('/api/check-suite',{'suite':suite})
+                self.assertEqual(start.call_args.args[1],['check-suite',suite])
+
+    def test_app_workers_use_the_same_settings_file_and_quoted_argument_list(self):
+        proc=mock.Mock();proc.poll.return_value=0
+        with mock.patch.object(gui.subprocess,'Popen',return_value=proc) as launch,mock.patch.object(gui.threading,'Thread'):
+            self.app.start('prepare-suite',['prepare-suite','bfcl'],'Preparing BFCL',suite='bfcl')
+        command=launch.call_args.args[0];kwargs=launch.call_args.kwargs
+        self.assertIsInstance(command,list)
+        self.assertEqual(command[-2:],['prepare-suite','bfcl'])
+        self.assertEqual(kwargs['env']['STRATABENCH_SETTINGS_FILE'],str(self.state_file))
+        self.assertNotIn('shell',kwargs)
 
     def test_welcome_acknowledgment_survives_app_restart_without_marking_setup_ready(self):
         self.request('/api/setup-welcome', {})

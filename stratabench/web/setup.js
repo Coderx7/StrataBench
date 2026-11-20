@@ -6,7 +6,7 @@ const sourceMethods={
   repository:{name:'Clone & build',icon:'sliders',detail:'Fetch a revision from a Git repository and build it in a separate folder.'},
   folder:{name:'Build from folder',icon:'document',detail:'Build a committed revision from a local Git checkout. Your checkout stays in place.'}
 };
-function renderSystem(){return renderHardwareSetup();}
+function renderSystem(){return renderHardwareSetup()+`<section class="card card-pad library-setup-link"><div><h2>Benchmark downloads & setup</h2><p>Choose suites and a download folder in the benchmark library. Setup runs inside the app on Windows and Linux.</p></div><button class="secondary-button" data-action="go-benchmarks">Open benchmark library</button><button class="text-button" data-action="benchmark-settings">Library settings</button></section>`;}
 function renderSourceSettings(){
   if(!sourceDraft)sourceDraft={...state.strata_source,cmake_args:[...(state.strata_source?.cmake_args||[])]};
   const c=sourceDraft,method=c.method||'release',build=['repository','folder'].includes(method);

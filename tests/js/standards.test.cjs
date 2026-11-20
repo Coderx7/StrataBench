@@ -12,7 +12,7 @@ test('SWE stays off with no preparation action until explicitly enabled',()=>{
   assert.ok(html.includes('Off by default'));assert.ok(html.includes('120 GB'));
   assert.ok(!html.includes('data-suite="swebench"'));assert.ok(!html.includes('id="optional-swebench" type="checkbox" checked'));
   const enabled=fixture(true).run('renderBenchmarkLibrary()');
-  assert.ok(enabled.includes('Prepare SWE-bench dataset & evaluator'));assert.ok(enabled.includes('data-suite="swebench"'));
+  assert.ok(enabled.includes('Download & prepare'));assert.ok(enabled.includes('data-suite="swebench"'));
 });
 test('standard controls distinguish full coverage from seeded samples',()=>{
   const f=fixture();let html=f.run('standardControls()');
@@ -22,4 +22,17 @@ test('standard controls distinguish full coverage from seeded samples',()=>{
 test('writing quality requires a separate judge and has no pass threshold',()=>{
   const f=fixture();const html=f.run("form.profile='writingbench';standardControls()");
   assert.ok(html.includes('Judge endpoint'));assert.ok(html.includes('five scoring calls'));assert.ok(html.includes('no arbitrary pass/fail threshold'));
+});
+test('an empty library offers all downloads and saved suite choices without starting setup',()=>{
+  const f=fixture();const html=f.run('renderBenchmarkLibrary()');
+  assert.ok(html.includes('Library settings'));assert.ok(html.includes('Change folder'));
+  assert.equal((html.match(/>Download & prepare</g)||[]).length,4);
+  assert.equal((html.match(/data-suite-enabled=/g)||[]).length,4);
+  assert.ok(!html.includes('>Use this suite</button>'));
+});
+test('ready suites expose in-app checks and repair while interrupted setup offers retry',()=>{
+  const f=fixture();let html=f.run("state.benchmark_library[0].ready=true;state.benchmark_library[0].status='ready';renderBenchmarkLibrary()");
+  assert.ok(html.includes('Check installation'));assert.ok(html.includes('Repair / reprepare'));
+  html=f.run("state.benchmark_library[0].ready=false;state.benchmark_library[0].status='interrupted';renderBenchmarkLibrary()");
+  assert.ok(html.includes('Setup stopped'));assert.ok(html.includes('Retry setup'));
 });

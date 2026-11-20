@@ -316,6 +316,8 @@ def parser():
     sub.add_parser('datasets', help='Download/cache public datasets once')
     q=sub.add_parser('prepare-suite',help='Explicitly prepare a standard benchmark and its isolated evaluator')
     q.add_argument('suite',choices=datasets.STANDARD_SPECS)
+    q=sub.add_parser('check-suite',help='Check a downloaded benchmark and its private evaluator without downloading anything')
+    q.add_argument('suite',choices=datasets.STANDARD_SPECS)
     q = sub.add_parser('add-version', help='Prepare a version using the configured Strata source')
     q.add_argument('tag')
     q.add_argument('--jobs', type=int)
@@ -400,9 +402,10 @@ def main():
         elif args.command == 'prepare-coding':
             from .coding_runtime import prepare
             print('Coding runtime ready: '+prepare(args.image))
-        elif args.command=='prepare-suite':
-            from .standard_suites import prepare
-            with local_lock('.prepare.lock'):prepare(args.suite)
+        elif args.command in ('prepare-suite','check-suite'):
+            from .standard_suites import prepare,check
+            with local_lock('.run.lock'),local_lock('.prepare.lock'):
+                (check if args.command=='check-suite' else prepare)(args.suite)
         elif args.command == 'source':
             from .acquisition import configure, preferences
             data = {k:v for k,v in vars(args).items() if k != 'command' and v is not None}

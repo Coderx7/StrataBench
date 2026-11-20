@@ -13,8 +13,9 @@ import tempfile
 import urllib.request
 import venv
 
-from .common import ROOT, digest, file_hash, read_json, stamp, write_json, settings
-from .platforms import quiet_options
+from .common import ROOT, digest, file_hash, read_json, stamp, write_json, settings, save_settings
+from . import common
+from .platforms import quiet_options, is_locked
 
 CACHE = ROOT / 'benchmarks'
 SPECS = {
@@ -39,17 +40,67 @@ SPECS = {
 BFCL_CATEGORIES = ('simple_python','multiple','parallel','parallel_multiple')
 
 
+def preferences(state=None):
+    state=settings() if state is None else state
+    saved=state.get('benchmark_library',{})
+    choices=saved.get('enabled_suites',{})
+    return {'download_folder':saved.get('download_folder',''),
+        'enabled_suites':{key:choices.get(key, bool(state.get('optional_swebench',False)) if key=='swebench' else True) for key in SPECS}}
+
+
+def storage_root(state=None):
+    selected=preferences(state)['download_folder']
+    return Path(selected).expanduser().resolve() if selected else CACHE
+
+
+def library_settings(state=None):
+    result=preferences(state);root=storage_root(state)
+    result.update(effective_folder=str(root),default_folder=str(CACHE))
+    parent=root
+    while not parent.exists() and parent!=parent.parent:parent=parent.parent
+    try:result['free_bytes']=shutil.disk_usage(parent).free
+    except OSError:result['free_bytes']=None
+    return result
+
+
+def configure(data):
+    state=settings();prefs=preferences(state)
+    if 'download_folder' in data:
+        value=data['download_folder']
+        if not isinstance(value,str) or len(value)>4096 or any(c in value for c in ('\0','\n','\r')):raise ValueError('Choose a valid benchmark download folder.')
+        value=value.strip()
+        if value:
+            path=Path(value).expanduser()
+            if not path.is_absolute():raise ValueError('Use a full folder path, or leave it empty for the app default.')
+            if path.exists() and not path.is_dir():raise ValueError('The benchmark download location must be a folder.')
+            parent=path
+            while not parent.exists() and parent!=parent.parent:parent=parent.parent
+            if not parent.is_dir():raise ValueError('The download folder’s parent must be a directory.')
+            value=str(path.resolve())
+        prefs['download_folder']=value
+    if 'enabled_suites' in data:
+        choices=data['enabled_suites']
+        if not isinstance(choices,dict) or any(key not in SPECS or type(value) is not bool for key,value in choices.items()):raise ValueError('Choose which benchmark suites to include.')
+        prefs['enabled_suites'].update(choices)
+    state['benchmark_library']=prefs
+    state['optional_swebench']=prefs['enabled_suites']['swebench']
+    save_settings(state)
+    return library_settings(state)
+
+
 def folder(suite):
     if suite not in SPECS: raise ValueError('Unknown standard benchmark.')
-    return CACHE / suite
+    return storage_root() / suite
 
 
-def python_path(root):
-    return root / 'runtime' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+def python_path(root, system=None):
+    system=system or ('Windows' if os.name=='nt' else 'Linux')
+    return root / 'runtime' / ('Scripts/python.exe' if system=='Windows' else 'bin/python')
 
 
 def enabled(suite, state=None):
-    return suite != 'swebench' or bool((settings() if state is None else state).get('optional_swebench', False))
+    if suite not in SPECS:raise ValueError('Unknown standard benchmark.')
+    return preferences(state)['enabled_suites'][suite]
 
 
 def metadata(suite):
@@ -57,14 +108,41 @@ def metadata(suite):
     if not path.exists(): return None
     try:
         data=read_json(path)
-        if data['revision'] != SPECS[suite]['revision'] or not python_path(folder(suite)).is_file(): return None
+        if data['revision'] != SPECS[suite]['revision'] or not python_path(folder(suite)).is_file() or not (folder(suite)/'cases.json').is_file(): return None
         return data
     except (OSError,ValueError,KeyError): return None
 
 
+def operation_status(suite):
+    path=folder(suite)/'installation.json'
+    try:status=read_json(path)
+    except (OSError,ValueError):return {}
+    if status.get('state')=='running' and not is_locked(common.ROOT/'.prepare.lock'):
+        return {**status,'state':'interrupted','message':'Preparation was interrupted. Choose Retry setup to continue.'}
+    return status
+
+
 def catalog(state=None):
-    return [dict(id=key, **spec, enabled=enabled(key,state), ready=bool(metadata(key)),
-        installed_count=(metadata(key) or {}).get('count'), installed_bytes=(metadata(key) or {}).get('bytes',0)) for key,spec in SPECS.items()]
+    result=[]
+    for key,spec in SPECS.items():
+        meta=metadata(key);operation=operation_status(key)
+        status='ready' if meta else 'needs_repair' if (folder(key)/'ready.json').exists() else 'not_installed'
+        if operation.get('state') in ('running','failed','interrupted'):status=operation['state']
+        result.append(dict(id=key,**spec,enabled=enabled(key,state),ready=bool(meta) and status=='ready',status=status,
+            operation=operation,folder=str(folder(key)),installed_count=(meta or {}).get('count'),installed_bytes=(meta or {}).get('bytes',0)))
+    return result
+
+
+def progress(suite, action, stage, message, step=0, steps=6, state='running'):
+    write_json(folder(suite)/'installation.json',{'suite':suite,'action':action,'stage':stage,'message':message,
+        'step':step,'steps':steps,'state':state,'updated':stamp()})
+    print(f'Benchmark setup: {stage} ({step}/{steps}) · {message}',flush=True)
+
+
+def finish_operation(suite,state,message):
+    previous=operation_status(suite)
+    progress(suite,previous.get('action','prepare'),previous.get('stage','Setup'),message,
+        previous.get('step',0),previous.get('steps',6),state)
 
 
 def verify(suite):
@@ -110,8 +188,18 @@ def worker(suite, operation, data=None, timeout=600):
 
 def prepare(suite):
     spec=SPECS[suite]
-    if not enabled(suite): raise ValueError('Enable the optional SWE-bench suite in Your setup first.')
+    if suite=='swebench' and not enabled(suite): raise ValueError('Enable the optional SWE-bench suite in Benchmark library first.')
     root=folder(suite);root.mkdir(parents=True,exist_ok=True)
+    try:
+        progress(suite,'prepare','Starting','Checking the selected download folder.',1)
+        return _prepare(suite,root,spec)
+    except BaseException as error:
+        state='interrupted' if isinstance(error,(KeyboardInterrupt,SystemExit)) else 'failed'
+        finish_operation(suite,state,'Setup stopped. Choose Retry setup to continue.' if state=='interrupted' else str(error))
+        raise
+
+
+def _prepare(suite,root,spec):
     # An interrupted or failed update must never leave a ready marker behind.
     (root/'ready.json').unlink(missing_ok=True)
     print('Preparing '+spec['name']+'. '+spec['size'],flush=True)
@@ -121,36 +209,57 @@ def prepare(suite):
         if system!='linux':raise ValueError('SWE-bench requires Docker running in Linux-container mode.')
         if shutil.disk_usage(root).free<120*1024**3: print('Notice: this drive has less than 120 GB free. Docker storage must have sufficient separate space.',flush=True)
     src=root/'source'
+    progress(suite,'prepare','Downloading sources','Retrieving pinned benchmark files.',2)
     for path in source_files(suite):
         print('  Source: '+path,flush=True)
         download(f'https://raw.githubusercontent.com/{spec["repo"]}/{spec["revision"]}/{path}',src/path)
-    if not python_path(root).exists():venv.EnvBuilder(with_pip=True).create(root/'runtime')
+    progress(suite,'prepare','Preparing evaluator','Creating a private Python environment.',3)
+    venv.EnvBuilder(with_pip=True).create(root/'runtime')
     requirements={'ifeval':['nltk==3.9.2','langdetect==1.0.9','immutabledict==4.2.1','absl-py==2.3.1'],
         'bfcl':[], 'mmmu':['datasets==4.4.1','Pillow==11.3.0','numpy==2.2.6','PyYAML==6.0.3'],
         'writingbench':[], 'swebench':['swebench==3.0.17']}[suite]
+    progress(suite,'prepare','Installing evaluator packages','Installing only into this suite’s private environment.',4)
     if requirements:subprocess.run([str(python_path(root)),'-m','pip','install',*requirements],check=True,
         env=dict(os.environ,PIP_CACHE_DIR=str(root/'pip-cache')),**quiet_options())
+    progress(suite,'prepare','Preparing dataset','Downloading and arranging the selected dataset. Images may take longer.',5)
     if suite=='swebench':
         # The installed package version and its dependency snapshot form part of provenance.
         result=worker(suite,'prepare',{'spec':spec},timeout=1800)
     else:result=worker(suite,'prepare',{'spec':spec},timeout=3600)
+    progress(suite,'prepare','Checking files','Saving checksums and the evaluator package snapshot.',6)
     freeze=subprocess.check_output([str(python_path(root)),'-m','pip','freeze'],text=True,**quiet_options())
     (root/'packages.txt').write_text(freeze,encoding='utf-8')
     files={str(p.relative_to(root)).replace(os.sep,'/'):file_hash(p) for p in src.rglob('*') if p.is_file() and '__pycache__' not in p.parts}
     for p in (root/'cases.json',root/'packages.txt'):files[p.name]=file_hash(p)
     info=dict(spec,prepared_at=stamp(),count=result['count'],files=files,bytes=sum((root/p).stat().st_size for p in files))
     write_json(root/'ready.json',info)
+    progress(suite,'prepare','Ready','The suite is ready to use.',6,state='complete')
     print(f'{spec["name"]} is ready: {result["count"]} cases. No model weights were changed.',flush=True)
 
 
 def select(suite, seed, limit=50):
     if type(limit) is not int or not 0<=limit<=100000:raise ValueError('Choose a nonnegative standard sample size; 0 means full split.')
-    if not enabled(suite):raise ValueError('SWE-bench is disabled. Enable it explicitly in Your setup.')
+    if not enabled(suite):raise ValueError(SPECS[suite]['name']+' is disabled. Enable it in Benchmark library.')
     verify(suite)
     cases=read_json(folder(suite)/'cases.json')
     cases.sort(key=lambda c:digest([seed,c['id']]))
     if limit:cases=cases[:limit]
     return cases
+
+
+def check(suite):
+    root=folder(suite)
+    if not root.exists():raise ValueError('Download and prepare this suite first.')
+    try:
+        progress(suite,'check','Checking files','Verifying the downloaded data and pinned source files.',1,2)
+        meta=verify(suite)
+        progress(suite,'check','Checking evaluator','Checking private evaluator dependencies. Nothing is downloaded.',2,2)
+        subprocess.run([str(python_path(root)),'-m','pip','check'],check=True,**quiet_options())
+        progress(suite,'check','Ready','All benchmark files and evaluator dependencies passed their checks.',2,2,'complete')
+        return meta
+    except BaseException as error:
+        finish_operation(suite,'interrupted' if isinstance(error,(KeyboardInterrupt,SystemExit)) else 'failed',str(error))
+        raise
 
 
 def provenance(suite, cases, limit):
