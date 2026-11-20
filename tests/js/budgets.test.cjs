@@ -11,10 +11,10 @@ function fixture(){
 test('default checkbox displays per-level values and unlocks initialized inputs',()=>{
  const f=fixture();let html=f.run('renderThinkingBudgets()');
  assert.ok(html.includes('id="thinking-use-defaults" checked'));assert.equal((html.match(/data-thinking-level=/g)||[]).length,5);
- assert.ok(html.includes('value="15360" disabled'));assert.ok(html.includes('Default: 15,360 tokens'));
+ assert.ok(html.includes('value="15360" disabled'));assert.ok(html.includes('data-thinking-default="extreme" role="cell">15,360</span>'));
  for(const change of f.listeners.get('change'))change({target:{id:'thinking-use-defaults',checked:false,dataset:{}}});
  html=f.run('renderThinkingBudgets()');assert.ok(html.includes('value="15360" >'));assert.ok(f.run('thinkingChanged()'));
- f.run("form.profile='ifeval'");assert.ok(f.run('renderThinkingBudgets()').includes('Original benchmark category thinking tokens'));
+ f.run("form.profile='ifeval'");html=f.run('renderThinkingBudgets()');assert.ok(html.includes('Original benchmark category thinking tokens'));assert.equal((html.match(/data-thinking-level=/g)||[]).length,1);
 });
 test('draft editing keeps selected configs until the explicit Apply action',async()=>{
  const f=fixture();f.run(`thinkingDraft={useDefaults:false,values:{...displayedThinkingDefaults(),extreme:180000}};
@@ -23,6 +23,8 @@ test('draft editing keeps selected configs until the explicit Apply action',asyn
  assert.ok(f.elements.get('#thinking-budget-status').innerHTML.includes('Small'));
  assert.equal(f.elements.get('[data-action="apply-thinking-budgets"]').textContent,'Apply budgets & deselect 1 incompatible config');
  assert.equal(f.run('selectedConfigs.size'),2);assert.equal(f.run('thinkingReady()'),false);
+ assert.equal(f.elements.get('#thinking-budget-overview').textContent,'Needs attention');
+ assert.equal(f.run('thinkingSettingsOpen'),false);
  await f.run('applyThinkingBudgets()');assert.equal(f.run('selectedConfigs.has("small")'),false);assert.equal(f.run('selectedConfigs.has("large")'),true);
  assert.equal(f.run('form.thinking_budgets.extreme'),180000);assert.equal(f.run('form.use_default_thinking_budgets'),false);
 });
@@ -46,4 +48,20 @@ test('time details preserve open and closed state across polling and replacement
  // A delayed event from a removed details node cannot close its replacement.
  details.open=true;for(const fn of f.listeners.get('toggle'))fn({target:details});for(const fn of f.listeners.get('toggle'))fn({target:{id:'time-by-config',isConnected:false,open:false}});
  assert.equal(f.run('timeByConfigOpen'),true);
+});
+
+test('thinking controls start collapsed and preserve explicit expansion while editing',()=>{
+ const f=fixture();assert.ok(!f.run('renderThinkingBudgets()').match(/<details id="thinking-settings"[^>]*\bopen\b/));
+ const panel={id:'thinking-settings',open:true,isConnected:true};f.elements.set('#thinking-settings',panel);
+ for(const toggle of f.listeners.get('toggle'))toggle({target:panel});
+ assert.ok(f.run('renderThinkingBudgets()').match(/<details id="thinking-settings"[^>]*\bopen\b/));
+ for(const change of f.listeners.get('change'))change({target:{id:'thinking-use-defaults',checked:false,dataset:{}}});
+ assert.ok(f.elements.get('.thinking-settings').outerHTML.match(/<details id="thinking-settings"[^>]*\bopen\b/));
+ f.run('thinkingCheckKey=thinkingSignature();thinkingCheck={invalid:[],unknown:[]};paintThinkingStatus()');
+ assert.equal(f.elements.get('#thinking-budget-overview').textContent,'Unapplied changes');
+ panel.open=false;for(const toggle of f.listeners.get('toggle'))toggle({target:panel});
+ assert.ok(!f.run('renderThinkingBudgets()').match(/<details id="thinking-settings"[^>]*\bopen\b/));
+ panel.open=true;for(const toggle of f.listeners.get('toggle'))toggle({target:panel});
+ for(const toggle of f.listeners.get('toggle'))toggle({target:{id:'thinking-settings',isConnected:false,open:false}});
+ assert.equal(f.run('thinkingSettingsOpen'),true);
 });

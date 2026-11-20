@@ -169,7 +169,7 @@ A Strata configuration includes `exe`, `cwd`, and an `args` array, plus the fiel
 1. Open **Strata versions**, prepare any additional versions, and choose the ordering. Numeric version sorting and custom ordering are available; drag tiles or use **Move earlier/later**.
 2. Open **New benchmark**, select versions and model configs, and choose a suite.
 3. Confirm **Reasoning effort**. The default is **xhigh**; off, low, medium, high, xhigh and server/config defaults are available.
-4. Under **Reasoning & repetition**, keep **Use default thinking budgets** checked, or uncheck it to edit the thinking tokens for each difficulty. Defaults remain visible beside each field. Choose **Apply budgets** after editing.
+4. Under **Reasoning & repetition**, click the **+** beside **Thinking tokens by difficulty** to expand the optional controls. Keep **Use default thinking budgets** checked, or uncheck it to edit the thinking tokens for each difficulty. Defaults remain visible beside each field. Choose **Apply budgets** after editing.
 5. If a budget does not fit a selected config, review the warning. **Apply budgets & deselect … incompatible configs** accepts the values and removes only those selections. Select another config if none remain.
 6. Set repeats and, if needed, advanced seed, temperature, overall answer-token limit and timeouts. Review the total time range; click **Time by configuration** for the breakdown. It stays open through refreshes and plan changes until you close it.
 7. Choose **Start benchmark**. Applied budgets are saved with the run and used again when you resume it.
@@ -178,7 +178,7 @@ The runner evaluates one version/config combination and one question at a time. 
 
 ### Thinking budgets and config capacity
 
-In **New benchmark → Reasoning & repetition**, **Use default thinking budgets** is checked initially. Every field shows the app’s default. Uncheck it to edit the values, then click **Apply budgets**. Reasoning effort (xhigh by default) and thinking-token caps are separate controls.
+In **New benchmark → Reasoning & repetition**, **Thinking tokens by difficulty** is collapsed by default, like **Advanced settings**. Click its **+** to expand it. The compact rows show the difficulty, default tokens and editable token limit. **Use default thinking budgets** is checked initially. Uncheck it to edit the limits, then click **Apply budgets**. The default column stays visible for comparison. A summary label shows custom limits, unapplied changes or a capacity warning even when the section is collapsed. Opening or closing it does not change your settings. Reasoning effort (xhigh by default) and thinking-token caps are separate controls.
 
 | Difficulty | Default thinking tokens | Automatic total generation tokens |
 | --- | ---: | ---: |

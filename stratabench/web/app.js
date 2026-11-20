@@ -82,7 +82,7 @@ async function refresh(force=false){
 }
 
 function navigate(to){if(!titles[to])to='new';page=to;location.hash=to;all('[data-nav]').forEach(el=>el.classList.toggle('active',el.dataset.nav===to));$('#breadcrumb').textContent=titles[to];if(state)render();window.scrollTo({top:0,behavior:'auto'});}
-function render(){if(!state)return;const views={new:renderNew,activity:renderActivity,results:renderResults,versions:renderVersions,system:renderSystem,references:renderReferences,benchmarks:renderBenchmarkLibrary,report:renderReport,tests:renderTests};const main=$('#main');rememberTimeDetails();main.innerHTML=views[page]();main.dataset.ready='1';icons(main);if(page==='new'){renderConfigList();updateSummary();}if(page==='tests')loadOutcomes();if(page==='activity'){const log=$('.log-output');if(log)log.scrollTop=log.scrollHeight;}}
+function render(){if(!state)return;const views={new:renderNew,activity:renderActivity,results:renderResults,versions:renderVersions,system:renderSystem,references:renderReferences,benchmarks:renderBenchmarkLibrary,report:renderReport,tests:renderTests};const main=$('#main');rememberTimeDetails();rememberThinkingSettings();main.innerHTML=views[page]();main.dataset.ready='1';icons(main);if(page==='new'){renderConfigList();updateSummary();}if(page==='tests')loadOutcomes();if(page==='activity'){const log=$('.log-output');if(log)log.scrollTop=log.scrollHeight;}}
 
 function renderNew(){
   const banner=busy()?`<div class="notification-banner"><span>${icon('activity')} ${esc(state.job.title)} · ${esc(state.job.stage)}</span><button data-action="go-activity">View activity</button></div>`:'';
