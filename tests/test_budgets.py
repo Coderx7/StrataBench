@@ -96,7 +96,7 @@ class ThinkingBudgetTests(unittest.TestCase):
 
     def test_history_requires_matching_thinking_cap_even_if_total_limit_matches(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);config=root/'config.json';write_json(config,{})
+            root=Path(tmp).resolve();config=root/'config.json';write_json(config,{})
             target=root/'results/run/target';target.mkdir(parents=True)
             options=self.options(max_tokens=8192)
             write_json(target.parent/'manifest.json',{'options':options,'targets':[{'id':'target','config':str(config),'config_sha256':file_hash(config),'version':{'name':'v1'}}]})

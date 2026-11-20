@@ -14,7 +14,7 @@ from stratabench import acquisition, common, gui, versions
 class SettingsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.state_file = self.root / 'settings.json'
         self.patches = [mock.patch.object(common, 'ROOT', self.root),
             mock.patch.object(common, 'STATE', self.state_file),

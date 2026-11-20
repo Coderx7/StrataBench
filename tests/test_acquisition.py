@@ -25,7 +25,7 @@ def make_tar(path, files):
 
 class SourceTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name).resolve()
         self.state={'strata_root':'','versions':{}}
         self.patches=[mock.patch.object(a,'ROOT',self.root),mock.patch.object(versions,'ROOT',self.root),
             mock.patch.object(a,'settings',side_effect=lambda:self.state),

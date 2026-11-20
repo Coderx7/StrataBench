@@ -18,7 +18,7 @@ from stratabench import gui, common
 class GuiTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         (self.root / 'results').mkdir()
         self.patches = [mock.patch.object(gui, 'ROOT', self.root),mock.patch.object(common,'ROOT',self.root),
             mock.patch.object(gui, 'hardware', return_value={'gpu': {'ok': True, 'output': 'Test GPU'}}),
@@ -227,12 +227,20 @@ if(!calls.includes('/api/state'))throw Error('Application startup never reached 
         good = self.root / 'results' / 'run-one'
         good.mkdir()
         self.assertEqual(gui.result_path('run-one'), good)
-        (self.root / 'results' / 'escape').symlink_to(self.root)
-        for name in ('../settings.json', '/etc/passwd', 'escape'):
+        for name in ('../settings.json', '/etc/passwd'):
             with self.assertRaises(ValueError):
                 gui.result_path(name)
         with self.assertRaises(urllib.error.HTTPError):
             self.request('/files/run-one/../../settings.json')
+
+    def test_report_directory_symlinks_cannot_escape_results(self):
+        link = self.root / 'results' / 'escape'
+        try:
+            link.symlink_to(self.root, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest('Directory symlinks are unavailable: ' + str(error))
+        with self.assertRaises(ValueError):
+            gui.result_path('escape')
 
     def test_outcome_endpoint_returns_saved_question_and_requires_a_valid_run(self):
         folder = self.root / 'results' / 'test-run'
@@ -299,18 +307,19 @@ if(!calls.includes('/api/state'))throw Error('Application startup never reached 
     def test_background_job_progress_and_safe_stop(self):
         script = self.root / 'bench'
         script.write_text('import time\nprint("2 questions × 1 repeat(s) × 1 combination(s).",flush=True)\n'
-                          'print("  1/2 PASS gen/test/1 (0.1s)",flush=True)\ntime.sleep(30)\n')
+                          'print("  1/2 PASS gen/test/1 (0.1s)",flush=True)\ntime.sleep(30)\n', encoding='utf-8')
         self.app.start('doctor', [], 'Test worker')
-        deadline = time.time()+5
-        while self.app.job['completed'] != 1 and time.time() < deadline:
+        deadline = time.monotonic()+10
+        while self.app.job['completed'] != 1 and self.app.job['state'] == 'running' and time.monotonic() < deadline:
             time.sleep(.02)
-        self.assertEqual(self.app.job['total'], 2)
-        self.assertEqual(self.app.job['passed'], 1)
+        logs = '\n'.join(self.app.job['logs'])
+        self.assertEqual(self.app.job['total'], 2, logs)
+        self.assertEqual(self.app.job['passed'], 1, logs)
         with self.assertRaises(ValueError):
             self.app.start('doctor', [], 'Second worker')
         self.app.stop()
-        deadline = time.time()+5
-        while self.app.job['state'] == 'stopping' and time.time() < deadline:
+        deadline = time.monotonic()+10
+        while self.app.job['state'] == 'stopping' and time.monotonic() < deadline:
             time.sleep(.02)
         self.assertEqual(self.app.job['state'], 'stopped')
 

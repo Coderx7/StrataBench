@@ -102,7 +102,7 @@ class CapabilityTests(unittest.TestCase):
     def test_configured_vision_encoder_is_preserved_when_a_version_has_no_bundled_encoder(self):
         from stratabench.common import write_json
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);(root/'encoder').write_bytes(b'helper');(root/'projector.gguf').write_bytes(b'weights')
+            root=Path(directory).resolve();(root/'encoder').write_bytes(b'helper');(root/'projector.gguf').write_bytes(b'weights')
             cfg={'exe':'unused','cwd':str(root),'args':[],'vision':{'exe':'encoder','mmproj':'projector.gguf'}}
             path=root/'config.json';write_json(path,cfg)
             version={'root':str(root/'version'),'exe':str(root/'version/engine/strata')}

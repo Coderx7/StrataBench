@@ -15,7 +15,7 @@ from stratabench.platforms import lock_file
 class OutcomeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.folder = self.root / 'results' / 'run-test'
         self.folder.mkdir(parents=True)
         self.patch = mock.patch.object(gui, 'ROOT', self.root)

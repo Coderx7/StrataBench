@@ -1,6 +1,7 @@
 """Planning ranges, calibrated conservatively from this machine's saved answer timings."""
 from collections import defaultdict
 import math
+import os
 from pathlib import Path
 import statistics
 
@@ -52,6 +53,11 @@ def timing_scope(options):
         'standard_revision':revision})
 
 
+def config_identity(path):
+    """Match saved and selected paths through aliases and Windows case differences."""
+    return os.path.normcase(str(Path(path).expanduser().resolve()))
+
+
 class TimingHistory:
     def __init__(self, root=ROOT):
         self.root = Path(root)
@@ -78,7 +84,7 @@ class TimingHistory:
                 for target in manifest['targets']:
                     if target.get('endpoint'):
                         continue
-                    config = target['config']
+                    config = config_identity(target['config'])
                     key = (config, target.get('config_sha256'), target['version']['name'], effort(options.get('reasoning')),timing_scope(options))
                     session = path.parent/target['id']/'session.json'
                     if session.exists():
@@ -110,7 +116,7 @@ class TimingHistory:
         self.samples,self.startups,self.signature = samples,startups,signature
 
     def estimate(self, config, version, counts, options):
-        path = str(Path(config['id']).resolve())
+        path = config_identity(config['id'])
         sha = file_hash(path) if Path(path).is_file() else None
         reasoning = effort(options.get('reasoning','xhigh'))
         slow,fast = rates(config)

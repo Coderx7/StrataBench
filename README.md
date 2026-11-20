@@ -458,6 +458,8 @@ python -m unittest discover -s tests -v
 
 The suite uses temporary files and local fake API servers; it does not download model weights or need a GPU/compiler. The tests include persisted source settings, first-run guidance, both inspector layouts, generated capability cases, tool orchestration, optional-judge separation, thinking-budget validation and capacity checks, budget-preserving resume, and persistent time-detail controls. Native batch-launcher checks run on Windows. For actual container checks with an already prepared image, set `STRATABENCH_DOCKER_TEST_IMAGE=python:3.12-slim` when running tests; these checks do not pull images automatically. The optional cached-public-data check is skipped when the raw dataset cache is absent. GitHub Actions is configured for Linux and Windows with Python 3.11, 3.12 and 3.13. Windows remains untested by me; the CI configuration does not establish that Windows checks have passed or that native GPU/driver/Strata integration works on a particular machine.
 
+Linux CI also runs `python tests/run_path_alias_checks.py`. It reruns the suite through a temporary-folder alias to catch assumptions about path spelling, including the kind of short/long-name mismatch seen on Windows. Only the child test process uses the temporary environment settings; the check does not change system settings or existing model files. Native Windows checks remain separate.
+
 For interface syntax checks, Node is optional:
 
 ```bash

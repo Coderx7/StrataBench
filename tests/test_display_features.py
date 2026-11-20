@@ -59,7 +59,7 @@ class ReferenceTests(unittest.TestCase):
 class EstimateTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.path = self.root/'config.json'
         write_json(self.path,{'args':[],'model_name':'iq3_s'})
         self.config = {'id':str(self.path),'name':'strata-iq3_s','model':'iq3_s','context':'262144'}
@@ -108,6 +108,26 @@ class EstimateTests(unittest.TestCase):
         self.assertEqual(self.estimate({'easy':10},{**self.options,'reasoning':'off'})['local_sample_questions'],0)
         write_json(self.path,{'changed':True})
         self.assertEqual(self.estimate({'easy':10})['local_sample_questions'],0)
+
+    def test_path_aliases_reuse_answer_and_startup_timings_without_merging_other_configs(self):
+        (self.root/'alias').mkdir()
+        alias=self.root/'alias'/'..'/self.path.name
+        folder=self.root/'results/alias-run';target=folder/'target'
+        target.mkdir(parents=True)
+        write_json(folder/'manifest.json',{'options':self.options,'targets':[{'id':'target',
+            'config':str(alias),'config_sha256':file_hash(self.path),'version':{'name':'v1'}}]})
+        write_json(target/'session.json',{'startup_seconds':400})
+        (target/'answers.jsonl').write_text(json.dumps({'case_id':'saved','repeat':0,'difficulty':'easy',
+            'elapsed_seconds':7,'request':{'max_tokens':2048}})+'\n',encoding='utf-8')
+        self.history.refresh()
+        estimated=self.estimate({'easy':1})
+        self.assertEqual(estimated['local_sample_questions'],1)
+        self.assertGreater(estimated['lower_seconds'],200)
+        via_alias=self.estimate({'easy':1},config={**self.config,'id':str(alias)})
+        for key in ('local_sample_questions','lower_seconds','upper_seconds'):
+            self.assertEqual(via_alias[key],estimated[key])
+        other=self.root/'different-config.json';other.write_bytes(self.path.read_bytes())
+        self.assertEqual(self.estimate({'easy':1},config={**self.config,'id':str(other)})['local_sample_questions'],0)
 
     def test_context_includes_prompt_reading_and_capacity_notice(self):
         short = self.estimate({'very_hard':3},{**self.options,'context_words_list':[16000]})

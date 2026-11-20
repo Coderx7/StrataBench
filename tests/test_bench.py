@@ -118,7 +118,7 @@ class DatasetTests(unittest.TestCase):
 class ConfigTests(unittest.TestCase):
     def test_copy_preserves_source_and_resolves_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             (root / 'pack').mkdir()
             (root / 'profile.bin').write_bytes(b'profile')
             cfg = {'exe': '/old/strata', 'cwd': str(root), 'args': ['--pack', 'pack', '--kv', 'q4_0',
@@ -182,7 +182,7 @@ class FakeAPI(BaseHTTPRequestHandler):
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.http = ThreadingHTTPServer(('127.0.0.1', 0), FakeAPI)
         self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
         self.thread.start()
