@@ -1,7 +1,7 @@
 import contextlib
 import io
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import tempfile
 import threading
 import time
@@ -259,15 +259,42 @@ if(!calls.includes('/api/state'))throw Error('Application startup never reached 
         self.assertFalse(list((self.root / 'user-tasks').glob('*.jsonl')))
 
     def test_imported_config_requires_absolute_working_directory(self):
-        with self.assertRaises(ValueError):
-            self.app.import_file({'kind': 'config', 'content': json.dumps({'exe': 'strata', 'args': [], 'cwd': '.'})})
+        relative_paths = ['', '.', '..', 'models', str(Path('models') / 'weights')]
+        if gui.windows():
+            relative_paths += ['/models', r'\models', r'C:models']
+        for cwd in relative_paths:
+            with self.subTest(cwd=cwd), self.assertRaises(ValueError):
+                self.app.import_file({'kind': 'config', 'content': json.dumps({'exe': 'strata', 'args': [], 'cwd': cwd})})
+        self.assertFalse((self.root / 'user-configs').exists())
+
+    def test_imported_config_windows_drive_and_network_paths(self):
+        # Exercise Windows path rules on every runner, including Linux.
+        with mock.patch.object(gui, 'Path', PureWindowsPath):
+            for cwd in ('.', 'models', '/models', r'\models', r'C:models'):
+                with self.subTest(cwd=cwd), self.assertRaises(ValueError):
+                    self.app.import_file({'kind': 'config', 'content': json.dumps(
+                        {'exe': 'strata.exe', 'args': [], 'cwd': cwd})})
+            for cwd in (r'C:\models with spaces', r'\\server\share\models'):
+                config = {'exe': 'strata.exe', 'args': [], 'cwd': cwd}
+                with self.subTest(cwd=cwd):
+                    response = self.app.import_file({'kind': 'config', 'content': json.dumps(config)})
+                    self.assertEqual(json.loads(Path(response['id']).read_text(encoding='utf-8')), config)
 
     def test_local_file_import_saves_only_a_copy(self):
-        config = {'exe': '/old/strata', 'args': ['--kv', 'q4_0'], 'cwd': '/models'}
-        response = self.app.import_file({'kind': 'config', 'name': '../../config.json', 'content': json.dumps(config)})
+        model_folder = self.root / 'models with spaces'
+        model_folder.mkdir()
+        config = {'exe': str(self.root / 'old build' / 'strata'), 'args': ['--kv', 'q4_0'],
+                  'cwd': str(model_folder)}
+        source = self.root / 'original-config.json'
+        source.write_text(json.dumps(config), encoding='utf-8')
+        original = source.read_bytes()
+        response = self.app.import_file({'kind': 'config', 'name': '../../config.json',
+                                        'content': source.read_text(encoding='utf-8')})
         path = Path(response['id'])
         self.assertEqual(path.parent, self.root / 'user-configs')
-        self.assertEqual(json.loads(path.read_text()), config)
+        self.assertEqual(json.loads(path.read_text(encoding='utf-8')), config)
+        self.assertNotEqual(path, source)
+        self.assertEqual(source.read_bytes(), original)
 
     def test_background_job_progress_and_safe_stop(self):
         script = self.root / 'bench'

@@ -9,11 +9,11 @@ jobs:
         python: ['3.11', '3.12', '3.13']
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: ${{ matrix.python }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: '22'
       - name: Prepare coding integration runtime
@@ -33,3 +33,4 @@ jobs:
       - run: node --check stratabench/web/setup.js
       - run: node --check stratabench/web/outcomes.js
       - run: node --check stratabench/web/helpers.js
+      - run: node --check stratabench/web/budgets.js
