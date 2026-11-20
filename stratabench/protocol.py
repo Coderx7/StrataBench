@@ -10,6 +10,7 @@ from .common import digest, file_hash, read_json
 PRESENTATION_MODULES = frozenset({
     'gui.py', 'diagnostics.py', 'estimates.py', 'reference_scores.py',
     'report.py', 'version_order.py', 'acquisition.py', 'cli.py', 'protocol.py',
+    'format_analysis.py', 'question_lab.py',
 })
 COMPATIBILITY_FILE = Path(__file__).with_name('protocol_compatibility.json')
 
@@ -19,11 +20,12 @@ def code_hash(root):
                    if p.name not in PRESENTATION_MODULES})
 
 
-def compatible(saved, current):
+def compatible(saved, current, cases=()):
     if saved == current:
         return True
     catalog = read_json(COMPATIBILITY_FILE)
     return any(entry['current'] == current and saved in entry['previous']
+               and not any(field in case for case in cases for field in entry.get('unsupported_previous_case_fields',[]))
                for entry in catalog['compatible_protocols'])
 
 
@@ -51,7 +53,7 @@ def validate_resume(manifest, cases, targets, options, environment, current_prot
     if manifest['signature'] != expected:
         raise RuntimeError('Resume refused: the saved run fingerprint does not match its recorded inputs. '
                            'Restore the original run files or start a new run.')
-    if not compatible(manifest['protocol_sha256'], current_protocol):
+    if not compatible(manifest['protocol_sha256'], current_protocol, cases):
         raise RuntimeError('Resume refused: benchmark execution or scoring code changed and this update '
                            'has not been verified as compatible. Use the original StrataBench revision '
                            'or start a new run. Saved answers are unchanged.')

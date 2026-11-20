@@ -10,6 +10,7 @@ import statistics
 
 from .common import digest, read_json, write_json
 from .reference_scores import catalog as reference_catalog, reference_rows
+from . import format_analysis, prompts
 
 
 def wilson(success, n):
@@ -102,6 +103,7 @@ def summarize(folder):
             'tool_calls':sum(r.get('tool_calls',0) for r in rows.values()),
             'tool_errors':sum(r.get('tool_errors',0) for r in rows.values())}
         summaries.append({**capability,'standard_metrics':standard,'id': target['id'], 'label': target['label'], 'folder': str(folder),
+            'format_errors':sum(bool(format_analysis.inspect(c,rows.get((c['id'],rep),{}))) for c in cases for rep in range(repeats)),
             'complete': complete, 'state': state.get('state', 'pending'), 'failure': state.get('error'),
             'planned': total, 'answered': len(rows), 'correct': None if quality_only else correct, 'accuracy': None if quality_only else correct/total,
             'macro_accuracy': None if quality_only else statistics.mean(v['accuracy'] for v in groups.values()),
@@ -171,7 +173,7 @@ def generate(folder, sources=None):
                 m=s['standard_metrics'];writer.writerow([s['label'],m['primary_name'],m['primary_value'],m['scored'],m['planned'],m['selection'],s['complete']])
                 for k,v in m['metrics'].items():writer.writerow([s['label'],k,v,m['scored'],m['planned'],m['selection'],s['complete']])
     fields = ['label', 'complete', 'macro_accuracy', 'accuracy', 'correct', 'answered', 'planned',
-              'errors', 'truncated', 'unparsed', 'elapsed_seconds', 'completion_tokens',
+              'errors', 'truncated', 'unparsed', 'format_errors', 'elapsed_seconds', 'completion_tokens',
               'effective_tokens_per_second', 'median_latency', 'p95_latency', 'constraint_score','style_judge_score','style_judge_count','style_judge_errors','tool_calls','tool_errors','folder']
     with (folder / 'leaderboard.csv').open('w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
@@ -221,26 +223,51 @@ def generate(folder, sources=None):
     level_rows = ['<tr><td>'+e(s['label'])+'</td>'+''.join('<td>'+pct(s['difficulty'][d]['accuracy'])+'</td>' for d in levels)+'</tr>' for s in summaries]
     pairs = ['<li>'+e(p['a'])+' versus '+e(p['b'])+f': {100*p["delta"]:+.1f} percentage points; '
              f'paired 95% interval [{100*p["interval_95"][0]:+.1f}, {100*p["interval_95"][1]:+.1f}]; '+e(p['interpretation'])+'</li>' for p in comparisons]
-    details = []
+    details = [];format_details=[];prompt_variants={};case_map={c['id']:c for c in cases}
     for s in summaries:
-        for row in latest_rows(Path(s['folder']) / s['id'] / 'answers.jsonl').values():
+        saved_rows=latest_rows(Path(s['folder']) / s['id'] / 'answers.jsonl')
+        case_requests=defaultdict(list)
+        for (id_,_),row in saved_rows.items():
+            if row.get('request'):case_requests[id_].append(row['request'])
+        for c in cases:
+            requests=case_requests.get(c['id'])
+            for request in requests or [None]:
+                system=prompts.system_messages(c,request);key=digest(system)
+                variant=prompt_variants.setdefault(key,{'messages':system,'case_ids':set(),'groups':set(),'combinations':set(),'evidence':set()})
+                variant['case_ids'].add(c['id']);variant['groups'].add(c['group']);variant['combinations'].add(s['label'])
+                variant['evidence'].add('recorded request' if request else 'inferred from saved plan/current defaults; request not recorded')
+        for row in saved_rows.values():
             if row.get('correct'):
                 continue
-            c = next((x for x in cases if x['id'] == row['case_id']), {})
+            c = case_map.get(row['case_id'], {})
+            format_issue=format_analysis.inspect(c,row)
             prompt = c.get('prompt', '')
             if len(prompt) > 12000:
                 prompt = prompt[:5000] + '\n[Long prompt shortened in report; full prompt is in cases.json]\n' + prompt[-3000:]
-            details.append('<details><summary>'+e(s['label'])+' · '+e(row['case_id'])+' · repeat '+str(row['repeat']+1)+
+            detail=('<details><summary>'+e(s['label'])+' · '+e(row['case_id'])+' · repeat '+str(row['repeat']+1)+
                 (' · ERROR' if row.get('error') else ' · CUTOFF' if row.get('truncated') else '')+'</summary>'+
-                '<h4>Question</h4><pre>'+e(prompt)+'</pre><h4>Expected</h4><pre>'+e(json.dumps(row['expected'], ensure_ascii=False))+
+                ('<p class="bad">'+e(format_issue['reason'])+' Strict score remains incorrect.</p>' if format_issue else '')+
+                '<h4>System prompt</h4><pre>'+e(prompts.system_text(c,row.get('request')) or '(No system prompt sent)')+'</pre>'+
+                '<h4>Question</h4><pre>'+e(prompt)+'</pre><h4>Expected</h4><pre>'+e(json.dumps(row.get('expected',c.get('answer')), ensure_ascii=False))+
                 '</pre><h4>Answer</h4><pre>'+e(row.get('content', row.get('error', '')))+
                 '</pre><p>Extracted: '+e(row.get('extracted'))+'</p></details>')
+            (format_details if format_issue else details).append(detail)
+    prompt_catalog=[{k:sorted(v) if isinstance(v,set) else v for k,v in item.items()} for item in prompt_variants.values()]
+    summary['system_prompts']=prompt_catalog
+    summary['format_analysis_notice']='Format issues are a verified subset of strict incorrect answers. They do not increase accuracy; unrecognized format problems may remain under Incorrect.'
+    write_json(folder/'system-prompts.json',prompt_catalog)
+    write_json(folder/'summary.json',summary)
     best = ('Highest observed complete score: ' + completed[0]['label'] + ' (' + (f'{ranking_score(completed[0])*100:.2f} / 100' if quality_only else pct(ranking_score(completed[0]))) + ').') if completed else 'No complete run yet. Incomplete runs are excluded from ranking.'
     doc = '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>StrataBench comparison</title><style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#101721;color:#e2e9f2;font:15px/1.6 system-ui,sans-serif}main{max-width:1500px;margin:auto;padding:42px 28px}h1{font-size:36px;margin:0}h2{margin-top:38px;font-size:23px}p{max-width:1000px;color:#b7c5d8}.hero{padding:22px 26px;background:#19283a;border-left:4px solid #52d5bf;border-radius:10px;margin:24px 0}.hero p{margin:4px 0}.table{overflow-x:auto}table{width:100%;border-collapse:collapse;background:#16202d;font-variant-numeric:tabular-nums}th,td{padding:12px;text-align:left;border-bottom:1px solid #2c3a4c}th{color:#9bb1cd;white-space:nowrap}tbody tr:hover{background:#1f3044}.ok{color:#6ae1b3}.bad{color:#ffac8c}.badge{font-size:11px;color:#b8c3df}code,pre{background:#0b121c;border-radius:6px}code{padding:3px 6px}pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:16px}details{border:1px solid #2c3a4c;border-radius:8px;margin:12px 0;padding:12px 18px}summary{cursor:pointer}a{color:#6edec8}button,input{font:inherit;background:#1c2e43;border:1px solid #3d5370;border-radius:6px;padding:8px 12px;color:inherit}input{width:min(700px,100%)}.muted{font-size:13px;color:#94a7c1}
 </style><main><h1>StrataBench</h1><p>Output quality across Strata versions and model configurations.</p>'''
     doc += '<div class="hero"><strong>'+e(best)+'</strong><p>'+e(str(len(cases)))+' questions · '+e(manifest['options']['profile'])+' · reasoning '+e(manifest['options']['reasoning'])+' · '+e(manifest['options']['repeats'])+' repeat(s)</p></div>'
+    if manifest['options'].get('question_selection'):
+        doc+='<div class="hero"><strong>Question lab experiment</strong><p>Custom question selection · '+str(manifest['options']['question_selection']['edited_system_prompts'])+' edited system prompt(s). Compare only with matching selections and prompt settings.</p></div>'
+    doc+='<h2>System prompts by benchmark</h2><p>Exact system/developer messages from saved requests where available; pending or older requests without recorded messages are inferred from the saved plan and current defaults. When no system message was sent, that absence is stated explicitly. Warm-up and separate judge requests are not the tested model’s task prompts. <a href="system-prompts.json">Download prompt catalog</a>.</p>'
+    for item in prompt_catalog:
+        doc+='<details><summary>'+e(', '.join(item['groups']))+' · '+str(len(item['case_ids']))+' questions</summary><pre>'+e('\n\n'.join(m['role']+': '+str(m.get('content','')) for m in item['messages']) or '(No system prompt sent)')+'</pre><p>'+e(', '.join(item['evidence']))+'</p><details><summary>Questions and combinations</summary><pre>'+e('\n'.join(item['case_ids']+item['combinations']))+'</pre></details></details>'
     if manifest['options'].get('standard_benchmark'):
         b=manifest['options']['standard_benchmark']
         doc+='<h2>'+e(b['name'])+' · '+e(b['selection'])+'</h2><p>'+e(b['split'])+' · '+str(b['selected_count'])+'/'+str(b['full_count'])+' cases. '+e(b['notice'])+'</p>'
@@ -260,15 +287,19 @@ def generate(folder, sources=None):
         doc += '<div class="table"><table><thead><tr><th>Dataset / group</th><th>Published original score</th><th>Weight precision</th>'+''.join('<th>Local: '+e(s['label'])+'</th>' for s in summaries)+'<th>Source and comparison limits</th></tr></thead><tbody>'+''.join(reference_table)+'</tbody></table></div>'
         doc += '<p>Checked '+e(refs['checked_on'])+'. <a href="reference-scores.csv">Download references and local scores as CSV</a>. No synthetic original-model overall score is computed.</p>'
     doc += '<h2>Paired uncertainty</h2><p>Question-level paired bootstrap, stratified by task group, with repeats kept together (1,500 resamples). This measures uncertainty on this task mix, not universal model ability. Tiny suites and all-identical outcomes can give overly narrow intervals.</p><ul>'+(''.join(pairs) or '<li>Complete at least two combinations to compare.</li>')+'</ul>'
-    doc += '<h2>Inspect failures</h2><input id="filter" placeholder="Filter by version, config or task"><div id="failures">'+(''.join(details) or '<p>No saved failures.</p>')+'</div>'
+    doc+='<h2>Correct content, wrong format</h2><p>'+e(summary['format_analysis_notice'])+'</p><div class="table"><table><tr><th>Combination</th><th>Verified format issues</th></tr>'+''.join('<tr><td>'+e(s['label'])+'</td><td>'+str(s['format_errors'])+'</td></tr>' for s in summaries)+'</table></div><div id="format-failures">'+(''.join(format_details) or '<p>No verified format-only failures.</p>')+'</div>'
+    doc += '<h2>Other strict failures</h2><input id="filter" placeholder="Filter failures by version, config or task"><div id="failures">'+(''.join(details) or '<p>No other saved failures.</p>')+'</div>'
     doc += '<h2>How to interpret this</h2><p>These are local zero-shot diagnostic scores. Public tasks may have appeared in model training. MATH-500 uses only numeric/rational answers and text-only questions; no official MATH-500 score is claimed. Generated difficulty labels are approximate; AIME provides competition-level problems. Algorithm tasks test reasoning about code and algorithms, not execution of generated programs. Persian arithmetic is a narrow language check. The separate capability suites measure explicit writing constraints with optional quality judging, generated visual tasks, controlled tool workflows and miniature Docker-isolated Python repairs. They do not establish broad real-world writing, vision or autonomous software-engineering ability.</p>'
     doc += '<p>Read <a href="summary.json">summary.json</a> or <a href="leaderboard.csv">leaderboard.csv</a> for machine-readable scores. Full responses, requests, settings and exact questions remain in each result folder.</p>'
     doc += '<details><summary>Run settings</summary><pre>'+e(json.dumps(manifest['options'], indent=2))+'</pre></details>'
-    doc += '<script>document.querySelector("#filter").addEventListener("input",e=>{const q=e.target.value.toLowerCase();document.querySelectorAll("#failures details").forEach(d=>d.hidden=!d.textContent.toLowerCase().includes(q))});</script></main></html>'
+    doc += '<script>document.querySelector("#filter").addEventListener("input",e=>{const q=e.target.value.toLowerCase();document.querySelectorAll("#failures details,#format-failures details").forEach(d=>d.hidden=!d.textContent.toLowerCase().includes(q))});</script></main></html>'
     (folder / 'report.html').write_text(doc, encoding='utf-8')
     lines = ['StrataBench — '+best, '', 'Balanced score | Accuracy | Answers | Combination']
     lines += [f'{pct(s["macro_accuracy"]):>6} | {pct(s["accuracy"]):>6} | {s["answered"]}/{s["planned"]} | {s["label"]}' + ('' if s['complete'] else ' [incomplete]') for s in summaries]
     lines += ['', 'Original-model references (context only; different evaluation protocols):']
     lines += [f'{r["group"]}: {r["score_percent"]:.2f}% ({r["weight_precision"]}); {r["source"]}' if r['available'] else r['group']+': not available — '+r['reason'] for r in refs['rows']]
+    lines += ['', 'System prompts by benchmark:']
+    for item in prompt_catalog:lines += [', '.join(item['groups']),json.dumps(item['messages'],ensure_ascii=False),', '.join(item['evidence'])]
+    lines += ['',summary['format_analysis_notice']]+[s['label']+': '+str(s['format_errors'])+' format issues' for s in summaries]
     (folder / 'report.txt').write_text('\n'.join(lines)+'\n', encoding='utf-8')
     return summary

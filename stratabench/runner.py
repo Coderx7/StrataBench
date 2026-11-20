@@ -16,30 +16,25 @@ from .common import ROOT, digest, file_hash, hardware, read_json, request_json, 
 from .platforms import process_options, stop_tree
 from .grading import grade
 from .versions import effective_config, fingerprint, vision_executable
-from . import budgets, protocol
+from . import budgets, protocol, prompts
 
-SYSTEM = ('Solve the task accurately. You may reason before answering. End with a JSON object '
-          'with exactly one key, "answer", containing your final answer. For a multiple-choice '
-          'question use only the option label; for a numeric question use a number or a numeric '
-          'string; for a structured answer use the requested object or list as the answer value. '
-          'Do not include an explanation inside the answer value.')
+SYSTEM = prompts.SYSTEM
 BUDGETS = budgets.OUTPUT_DEFAULTS
 
 
 def payload(case, options, repeat=0):
     body = {'model': options.get('model', 'strata'), 'stream': False,
-            'messages': [{'role': 'system', 'content': case.get('system',SYSTEM)}, {'role': 'user', 'content': case['prompt']}],
+            'messages': prompts.messages(case),
             'temperature': options['temperature'], 'top_p': 1.0,
             'seed': options['seed'] + repeat,
             'max_tokens': budgets.output_limit(options,case['difficulty'])}
     thinking=budgets.thinking_limit(options,case['difficulty'])
     if thinking is not None:body['reasoning_budget_tokens']=thinking
+    user=next(m for m in reversed(body['messages']) if m['role']=='user')
     if case.get('image'):
-        body['messages'][1]['content']=[{'type':'text','text':case['prompt']},{'type':'image_url','image_url':{'url':case['image']}}]
+        user['content']=[{'type':'text','text':case['prompt']},{'type':'image_url','image_url':{'url':case['image']}}]
     if case.get('images'):
-        body['messages'][1]['content']=[{'type':'text','text':case['prompt']}]+[{'type':'image_url','image_url':{'url':image}} for image in case['images']]
-    if case.get('standard_suite') and case.get('system') is None:
-        body['messages']=[m for m in body['messages'] if m['role']!='system']
+        user['content']=[{'type':'text','text':case['prompt']}]+[{'type':'image_url','image_url':{'url':image}} for image in case['images']]
     effort = options.get('reasoning', 'xhigh')
     if effort != 'default':
         body['reasoning_effort'] = 'none' if effort == 'off' else effort

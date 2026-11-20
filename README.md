@@ -315,6 +315,27 @@ Tool/coding suites have a configurable maximum model-turn count (default 8). The
 
 The included Qwen3.8-Flash-Next GSM8K reference is labeled **BF16**, with its independent evaluation method and a **Context only** comparison label. BF16 is distinct from FP16, FP32 and INT8. The reference catalog does not assert that a small local subset, xhigh reasoning or a local quantized model reproduces that published evaluation. References also appear in reports and a separate CSV.
 
+## Question lab and system-prompt experiments
+
+Open **Question lab** to run specific questions instead of an entire preset:
+
+1. Choose a benchmark and question seed, then click **Load questions**. **Full suite** exposes every included reasoning dataset. Optional standard suites appear when enabled; prepare them in **Benchmark library** first. Loading another benchmark starts a new selection.
+2. Search by text or question ID, filter by task group/difficulty, and check individual questions. Selection is kept across pages; **Select this page** selects only the visible page.
+3. Click a question title to read the question, reference answer, input images and effective system prompt. **Use benchmark system prompt** is checked by default. Uncheck it to edit that question’s prompt. An intentionally blank override sends no system message. **Apply this prompt to selected questions** copies the current prompt to the selected questions.
+4. Click **Choose versions & configs**. The New benchmark screen shows a **Question lab experiment** banner and the exact selected question count. Choose versions, configs, reasoning, budgets and any required judge/Docker settings, then start normally. The question seed stays fixed for this saved selection; change it in Question lab to build another selection.
+
+Selections live in the ignored `user-tasks/` folder. Each run saves the actual selected questions, per-question overrides and selection fingerprint in its normal result files. Original datasets, graders and model configs are preserved. Selection/prompt experiments have their own comparison identity and are labelled explicitly, including when they use a standard upstream evaluator. They are not presented as published full-benchmark scores. Resume keeps the saved selection and prompts.
+
+![Question lab with an individual question and edited system prompt](docs/screenshots/question-lab.jpg)
+
+Reports now include **System prompts by benchmark**, with exact recorded system/developer messages grouped by task group and question IDs. Test details show the prompt from that response’s saved request. Pending tests or older records without requests are inferred from the saved question plan and current defaults, and are labelled accordingly. A suite with no system message says **No system prompt sent**. Download `system-prompts.json` for a machine-readable prompt catalog; prompts also appear in `summary.json` and `report.txt`. Warm-up and separate judging requests are not the tested model’s task prompts. For an older report, click **Refresh report** after the active benchmark finishes; this rebuilds the presentation from saved answers.
+
+## Correct content, wrong format
+
+**Correct content, wrong format** is a dedicated, clickable category in Results and the Test explorer, and a separate report section. It explains cases such as BBH word sorting returning the exact words in the exact order as a JSON array when the reference expects one space-separated string. The detail shows the original response, reference, system prompt, normalized representation and reason.
+
+This is a **read-only diagnostic subset of Incorrect**, not extra credit: strict accuracy, rankings, saved answer rows and upstream metrics do not change. The checker recognizes narrowly verifiable cases: exact word-sorting arrays or line lists, correct numeric/option values in one-item arrays, and a requested JSON object/array returned as an encoded JSON string. It rejects missing/reordered/extra content, unfinished answers and request errors. It does not infer subjective semantic correctness or rejudge upstream suites; other format problems can remain under Incorrect. This helps separate a representation/instruction-following issue from a wrong answer without inflating the benchmark score.
+
 ## Failed benchmarks and logs
 
 Click a benchmark’s **status** in **Activity**, **Results**, or the **Test explorer** to open **Error details & logs**. Failed and unfinished runs show a short reason beside the status. The details window lists saved startup/combination errors, the latest request or judge failures for each test, and available activity, Strata server and engine logs. Incorrect answers and token cutoffs remain separate test outcomes; inspect their counts to compare the response with its reference answer.
@@ -348,6 +369,7 @@ Reports and raw files are under `results/<run-id>/`:
 | `<target>/session-*/` | Effective configs, launch details and server/engine logs |
 | `report.html`, `report.txt` | Readable reports |
 | `summary.json`, `leaderboard.csv` | Machine-readable summaries |
+| `system-prompts.json` | Effective system/developer prompts, associated questions and evidence source |
 | `reference-scores.csv` | Published original-model context alongside local task scores |
 
 Only runs with matching questions, settings, environment and scoring protocol can be combined with **Compare selected**. Prepared versions and result folders are never silently overwritten.
@@ -480,6 +502,7 @@ node --check stratabench/web/outcomes.js
 node --check stratabench/web/helpers.js
 node --check stratabench/web/budgets.js
 node --check stratabench/web/diagnostics.js
+node --check stratabench/web/lab.js
 ```
 
 Local settings, model files, downloaded binaries, virtual environments, runtime credentials, logs, the default benchmark download folder and benchmark results are excluded from Git. Public source URLs and upstream references are retained for reproducibility. No benchmark output is uploaded by default. Enabling a writing judge sends that writing brief and response to its configured endpoint. Dataset downloads, Git source retrieval, release downloads and isolated Python package installation are the network operations used during preparation. For development or an isolated test installation, `STRATABENCH_SETTINGS_FILE` can point to a separate settings file; app workers inherit the same file automatically.

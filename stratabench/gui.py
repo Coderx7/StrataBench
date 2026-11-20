@@ -29,7 +29,7 @@ from .estimates import TimingHistory
 from .platforms import is_locked, process_options, stop_tree, windows, find_python
 from . import acquisition
 from . import standard_suites
-from . import common, diagnostics
+from . import common, diagnostics, format_analysis, prompts, question_lab
 
 ASSETS = ROOT / 'stratabench' / 'web'
 INSTANCE = ROOT / '.gui-instance.json'
@@ -51,15 +51,15 @@ class AnswerIndex:
     def __init__(self):
         self.files = {}
 
-    def rows(self, path):
+    def rows(self, path, cases=None, revision=None):
         if not path.exists():
             self.files.pop(path, None)
             return {}
         stat = path.stat()
         index = self.files.get(path)
-        if not index or index['inode'] != stat.st_ino or stat.st_size < index['size'] or (
+        if not index or index.get('revision')!=revision or index['inode'] != stat.st_ino or stat.st_size < index['size'] or (
                 stat.st_size == index['size'] and stat.st_mtime_ns != index['mtime']):
-            index = {'inode': stat.st_ino, 'pos': 0, 'rows': {}}
+            index = {'inode': stat.st_ino, 'pos': 0, 'rows': {},'revision':revision}
             self.files[path] = index
         with path.open('rb') as stream:
             stream.seek(index['pos'])
@@ -76,6 +76,7 @@ class AnswerIndex:
                               else 'passed' if row.get('correct') else 'incorrect')
                     previous = index['rows'].get(key, {})
                     index['rows'][key] = {'status': status, 'offset': offset, 'bytes': len(line),
+                        'format_error':format_analysis.inspect((cases or {}).get(row['case_id'],{}),row),
                         'attempts': previous.get('attempts', 0)+1,
                         'elapsed_seconds': row.get('elapsed_seconds', 0),
                         'unparsed': bool(row.get('unparsed')) and status != 'errors',
@@ -173,6 +174,10 @@ def run_command(data, validate_judge=True):
         if not re.fullmatch(r'[a-f0-9]{32}\.jsonl', str(name)) or not (ROOT / 'user-tasks' / name).is_file():
             raise ValueError('Choose a custom question file first.')
         cmd += ['--tasks', str(ROOT / 'user-tasks' / name)]
+    if data.get('selection_id'):
+        path=question_lab.selection_path(ROOT,data['selection_id'])
+        question_lab.load_selection(path,profile,int(data.get('seed',20261119)))
+        cmd += ['--question-selection',str(path)]
     if profile in standard_suites.SPECS:
         if not standard_suites.enabled(profile,version_state):raise ValueError('Enable '+standard_suites.SPECS[profile]['name']+' in Benchmark library first.')
         if type(data.get('standard_full',False)) is not bool:raise ValueError('Choose a full split or a seeded sample.')
@@ -209,6 +214,7 @@ class App:
         self.saved_cases = {}
         self.hardware = hardware()
         self.timing_history = TimingHistory(ROOT)
+        self.question_library = question_lab.Library(ROOT)
         self.profiles = []
         self.profile_counts = {}
         self.groups = set()
@@ -267,7 +273,8 @@ class App:
             if self.saved_cases.get(folder, (None,))[0] != stamp:
                 self.saved_cases[folder] = (stamp, read_json(case_path))
             cases = self.saved_cases[folder][1]
-            counts = dict.fromkeys(('passed', 'incorrect', 'cutoffs', 'errors', 'pending', 'unparsed', 'judge_errors'), 0)
+            counts = dict.fromkeys(('passed', 'incorrect', 'cutoffs', 'errors', 'pending', 'unparsed', 'judge_errors','format_errors'), 0)
+            case_map={c['id']:c for c in cases}
             if any(c.get('score_only') for c in cases):counts['rated']=0
             entries, targets = [], []
             for ti, target in enumerate(manifest['targets']):
@@ -275,13 +282,14 @@ class App:
                 if not target_dir.is_relative_to(folder.resolve()):
                     raise ValueError('This saved run has an invalid combination folder.')
                 path = target_dir / 'answers.jsonl'
-                rows = self.answers.rows(path)
+                rows = self.answers.rows(path,case_map,stamp)
                 targets.append({'id': str(ti), 'label': target['label']})
                 for repeat in range(manifest['options']['repeats']):
                     for ci, case in enumerate(cases):
                         row = rows.get((case['id'], repeat), {})
                         status = row.get('status', 'pending')
                         counts[status] += 1
+                        if row.get('format_error'):counts['format_errors']+=1
                         if row.get('judge_error'):counts['judge_errors']+=1
                         if row.get('unparsed'):
                             counts['unparsed'] += 1
@@ -292,6 +300,7 @@ class App:
                                 'preview': case.get('prompt', '')[:180], 'status': status,
                                 'attempts': row.get('attempts', 0), 'elapsed_seconds': row.get('elapsed_seconds'),
                                 'unparsed': row.get('unparsed', False),'judge_error':row.get('judge_error',False), '_case': case, '_row': row, '_path': path})
+                            entries[-1]['format_error']=row.get('format_error')
             total = sum(counts.get(k,0) for k in ('passed', 'incorrect', 'cutoffs', 'errors', 'pending','rated'))
             owned = bool(self.job and self.job.get('result_id') == folder.name and self.job['state'] in ('running', 'stopping'))
             locked = benchmark_locked()
@@ -316,12 +325,13 @@ class App:
                         stream.seek(entry['_row']['offset'])
                         row = json.loads(stream.read(entry['_row']['bytes']))
                 return {'test': {k: v for k, v in entry.items() if not k.startswith('_')},
-                        'case': entry['_case'], 'answer': row}
+                        'case': entry['_case'], 'answer': row,
+                        'system_prompts':prompts.system_messages(entry['_case'],row.get('request'))}
             category = data.get('category', 'all')
             if category not in ('all', *counts):
                 raise ValueError('Choose a valid test category.')
             query = str(data.get('search', '')).strip().casefold()[:300]
-            filtered = [e for e in entries if (category == 'all' or e['status'] == category or category == 'unparsed' and e['unparsed'] or category == 'judge_errors' and e['judge_error'])
+            filtered = [e for e in entries if (category == 'all' or e['status'] == category or category == 'unparsed' and e['unparsed'] or category == 'judge_errors' and e['judge_error'] or category=='format_errors' and e['format_error'])
                 and (not data.get('target') or e['target'] == str(data['target']))
                 and (not data.get('difficulty') or e['difficulty'] == data['difficulty'])
                 and (not data.get('group') or e['group'] == data['group'])
@@ -347,6 +357,7 @@ class App:
                 judge_key_needed=bool(m['options'].get('style_judge_key_required') and not (self.judge_keys.get(judge) or os.environ.get('STRATABENCH_JUDGE_API_KEY')))
                 items.append({'id': path.parent.name, 'created': m['created'], 'status': m['status'],
                     'profile': m['options']['profile'], 'reasoning': m['options']['reasoning'],
+                    'question_selection':m['options'].get('question_selection'),
                     'standard_benchmark':m['options'].get('standard_benchmark'),
                     'repeats': m['options']['repeats'], 'questions': m['case_count'],
                     'combinations': len(m['targets']), 'targets': [t['label'] for t in m['targets']],
@@ -516,6 +527,10 @@ class App:
             return {'ok': True}
 
     def action(self, route, data):
+        if route == '/api/questions':
+            with self.lock:return self.question_library.browse(data)
+        if route == '/api/question-selection':
+            with self.lock:return self.question_library.save(data)
         if route == '/api/setup-welcome':
             with local_lock('.prepare.lock'):
                 state = settings()
@@ -623,6 +638,8 @@ class App:
             return self.start('snapshot', cmd, 'Importing '+name)
         if route in ('/api/resume', '/api/report'):
             folder = result_path(data.get('id'))
+            if route.endswith('report') and benchmark_locked():
+                raise ValueError('Wait for the active benchmark to finish or stop before rebuilding a report.')
             progress = {};overrides={}
             if route.endswith('resume'):
                 options=read_json(folder/'manifest.json')['options']
@@ -646,6 +663,7 @@ class App:
                               ['resume' if route.endswith('resume') else 'report', str(folder)],
                               'Resuming benchmark' if route.endswith('resume') else 'Updating report', result_id=folder.name, env_overrides=overrides, **progress)
         if route == '/api/compare':
+            if benchmark_locked():raise ValueError('Wait for the active benchmark to finish or stop before rebuilding a comparison report.')
             ids = data.get('ids', [])
             if not isinstance(ids, list) or len(set(ids)) < 2:
                 raise ValueError('Select at least two saved runs to compare.')
@@ -684,7 +702,10 @@ class App:
         if not isinstance(selected,list) or any(not isinstance(c,str) or c not in known for c in selected):raise ValueError('Choose known model configurations.')
         levels=data.get('difficulties',datasets.DIFFICULTIES)
         if not isinstance(levels,list) or any(l not in datasets.DIFFICULTIES for l in levels):raise ValueError('Choose difficulty levels.')
-        if profile in standard_suites.SPECS:levels=['unrated']
+        if data.get('selection_id'):
+            selection=question_lab.load_selection(question_lab.selection_path(ROOT,data['selection_id']),profile,int(data.get('seed',20261119)))
+            levels=list({c['difficulty'] for c in selection['cases']})
+        elif profile in standard_suites.SPECS:levels=['unrated']
         elif profile=='custom':
             name=data.get('tasks_id','')
             if not re.fullmatch(r'[a-f0-9]{32}\.jsonl',str(name)) or not (ROOT/'user-tasks'/name).is_file():raise ValueError('Choose a custom question file first.')
@@ -705,7 +726,7 @@ class App:
             result['suites'] = {}
             for key in datasets.PROFILES:
                 try:
-                    result['suites'][key] = self.estimate({**data,'profile':key,'all_suites':False})
+                    result['suites'][key] = self.estimate({**data,'profile':key,'selection_id':None,'all_suites':False})
                 except ValueError as error:
                     result['suites'][key] = {'profile':key,'error':str(error)}
             return result
@@ -715,7 +736,11 @@ class App:
         configs = {c['id']:c for c in config_catalog()}
         difficulties = set(data.get('difficulties',datasets.DIFFICULTIES))
         options = {**data,**budgets.options_from_form(data)}
-        if profile == 'context':
+        if data.get('selection_id'):
+            selection=question_lab.load_selection(question_lab.selection_path(ROOT,data['selection_id']),profile,int(data.get('seed',20261119)))
+            counts=Counter(c['difficulty'] for c in selection['cases'])
+            difficulties=set(counts)
+        elif profile == 'context':
             words = [int(x) for x in str(data.get('context_words','2000 8000 16000 32000')).replace(',',' ').split()]
             counts = Counter()
             for word in words:
@@ -730,7 +755,7 @@ class App:
             if counts is None:
                 raise ValueError('Download this suite before estimating its duration.')
         counts = {k:v for k,v in counts.items() if k in difficulties or profile in standard_suites.SPECS}
-        if profile in standard_suites.SPECS and not data.get('standard_full'):
+        if profile in standard_suites.SPECS and not data.get('standard_full') and not data.get('selection_id'):
             counts={'unrated':min(sum(counts.values()),int(data.get('standard_limit') or 50))}
         if not sum(counts.values()):
             raise ValueError('No questions in this suite match the selected difficulty levels.')
@@ -846,11 +871,11 @@ def handler(app):
                             except (BrokenPipeError,ConnectionResetError):break
                 elif path.startswith('/files/'):
                     parts = path.split('/')
-                    if len(parts) != 4 or parts[3] not in ('report.html', 'summary.json', 'leaderboard.csv', 'reference-scores.csv', 'report.txt'):
+                    if len(parts) != 4 or parts[3] not in ('report.html', 'summary.json', 'leaderboard.csv', 'reference-scores.csv', 'report.txt','system-prompts.json'):
                         raise ValueError('This report file is not available.')
                     file = result_path(parts[2]) / parts[3]
                     self.send(200, file.read_bytes(), mimetypes.guess_type(file.name)[0] or 'application/octet-stream')
-                elif path in ('/', '/app.js', '/helpers.js', '/budgets.js', '/outcomes.js', '/setup.js', '/diagnostics.js', '/style.css', '/icon.svg'):
+                elif path in ('/', '/app.js', '/helpers.js', '/budgets.js', '/outcomes.js', '/setup.js', '/diagnostics.js', '/lab.js', '/style.css', '/icon.svg'):
                     file = ASSETS / ('index.html' if path == '/' else path[1:])
                     self.send(200, file.read_bytes(), mimetypes.guess_type(file.name)[0] or 'text/plain')
                 else:

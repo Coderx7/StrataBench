@@ -8,6 +8,7 @@ import os
 import time
 
 from . import standard_suites as suites
+from . import prompts
 
 
 def json_schema(schema):
@@ -23,7 +24,7 @@ def json_schema(schema):
 
 def bfcl_request(case,body):
     body=copy.deepcopy(body)
-    body['messages']=copy.deepcopy(case['messages'])
+    body['messages']=prompts.messages(case)
     functions=case['upstream']['function'];names={f['name'].replace('.','_'):f['name'] for f in functions}
     if len(names)!=len(functions):raise ValueError('Function names collide after API normalization.')
     body['tools']=[{'type':'function','function':{**json_schema(f),'name':f['name'].replace('.','_')}} for f in functions]
@@ -98,8 +99,7 @@ def run_swe(case,body,endpoint,options,api_key=None,run_id=None):
     from .capability_runner import tool
     image=options['swe_images'][case['id']];session=suites.worker('swebench','open',{'image':image,'run_id':run_id});name=session['container']
     started=time.monotonic();trace=[];usage={};last={};body=copy.deepcopy(body)
-    body['messages']=[{'role':'system','content':'You fix software issues in a Linux repository at /testbed. Use the terminal tool to inspect files, edit the code, and run tests. Changes stay inside this task container. Do not modify tests to hide failures. Finish with a short summary after implementing the fix.'},
-        {'role':'user','content':case['prompt']}]
+    body['messages']=prompts.messages(case)
     body['tools']=[tool('terminal','Run a bash command in the isolated repository container. No network or host folders are available.',{'command':{'type':'string'}},['command'])]
     body['tool_choice']='auto'
     if options.get('max_tokens') is None and options.get('thinking_budgets') is None:body['max_tokens']=4096

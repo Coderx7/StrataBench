@@ -2,18 +2,23 @@
   "schema": 1,
   "compatible_protocols": [
     {
-      "current": "4312afb8987c846bd2a8769b6fbcae4235498d082b124bd69c2d07d9da3e9cfb",
+      "current": "d4b8765c0a524a041f6824409ec76ac291fd61749b1d1d67ae4b1cdeb5f9f45f",
       "previous": [
         "00efcd9e35cccce25ab082c22f01021e7ce07b6a15c755a2fa24c9024fe17fa6",
         "5f41a57652ba2b4289d1d947df19aa4932a5d7b218c0990932e34f2eafa48b8c",
-        "8ccc22edc7e078e70e29d8f79124beecb7a02adc8d73196fb97de3550824070e"
+        "8ccc22edc7e078e70e29d8f79124beecb7a02adc8d73196fb97de3550824070e",
+        "4312afb8987c846bd2a8769b6fbcae4235498d082b124bd69c2d07d9da3e9cfb"
       ],
       "reviewed_revisions": [
         "abd96bf",
         "b949aaf",
-        "a4c4925"
+        "a4c4925",
+        "cf3ba32"
       ],
-      "reason": "Presentation and timing changes, additional failure text, stricter resume diagnostics and POSIX port-probe reuse do not change requests, answers or grading. Model/config/environment checks remain mandatory."
+      "reason": "Presentation and timing changes, additional failure text, stricter resume diagnostics and POSIX port-probe reuse do not change requests, answers or grading. Model/config/environment checks remain mandatory. System-message resolution preserves original requests for cases without the new explicit system_override field; experiment selections and prompt overrides are recorded in the signed cases/options. Format analysis is read-only and strict grading is unchanged.",
+      "unsupported_previous_case_fields": [
+        "system_override"
+      ]
     }
   ]
 }

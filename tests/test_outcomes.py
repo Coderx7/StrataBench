@@ -43,13 +43,29 @@ class OutcomeTests(unittest.TestCase):
 
     def test_disjoint_counts_include_missing_targets_and_additional_unparsed_filter(self):
         data = self.app.outcomes(self.folder)
-        self.assertEqual(data['counts'],dict(passed=1,incorrect=1,cutoffs=1,errors=1,pending=6,unparsed=1,judge_errors=0))
+        self.assertEqual(data['counts'],dict(passed=1,incorrect=1,cutoffs=1,errors=1,pending=6,unparsed=1,judge_errors=0,format_errors=0))
         self.assertEqual(data['total'],10)
         self.assertEqual(data['remaining'],7)
         self.assertTrue(data['resumable'])
         self.assertEqual(data['status'],'interrupted')  # recovered stale running manifest
         self.assertEqual(len(self.app.outcomes(self.folder,{'category':'incorrect'})['tests']),1)
         self.assertEqual(self.app.outcomes(self.folder,{'category':'unparsed'})['tests'][0]['status'],'cutoffs')
+
+    def test_format_issues_are_a_read_only_subset_and_show_the_recorded_system_prompt(self):
+        self.cases[0].update(group='bbh_word_sorting',grader='exact',answer='a b')
+        write_json(self.folder/'cases.json',self.cases)
+        self.rows[0].update(correct=False,content='{"answer":["a","b"]}',
+            request={'messages':[{'role':'system','content':'Recorded prompt'},{'role':'user','content':'Sort'}]})
+        self.path.write_text(''.join(json.dumps(r)+'\n' for r in self.rows),encoding='utf-8')
+        before=self.path.read_bytes()
+        result=self.app.outcomes(self.folder,{'category':'format_errors'})
+        self.assertEqual(result['counts']['format_errors'],1)
+        self.assertEqual(result['counts']['incorrect'],2)
+        self.assertEqual(result['total'],10);self.assertEqual(len(result['tests']),1)
+        detail=self.app.outcomes(self.folder,{'key':'0.0.0'})
+        self.assertEqual(detail['system_prompts'][0]['content'],'Recorded prompt')
+        self.assertEqual(detail['test']['format_error']['normalized'],'a b')
+        self.assertFalse(detail['answer']['correct']);self.assertEqual(self.path.read_bytes(),before)
 
     def test_partial_line_is_ignored_without_mutation_and_completed_append_is_indexed(self):
         self.app.outcomes(self.folder)
@@ -85,6 +101,15 @@ class OutcomeTests(unittest.TestCase):
         self.assertEqual(detail['answer']['content'],'42')
         for data in ({'category':'bad'},{'key':'../../etc/passwd'},{'offset':-1},{'limit':101}):
             with self.assertRaises(ValueError): self.app.outcomes(self.folder,data)
+
+    def test_report_refresh_cannot_read_and_repair_a_live_writers_partial_record(self):
+        before=self.path.read_bytes()
+        with mock.patch.object(gui,'benchmark_locked',return_value=True),mock.patch.object(self.app,'start') as start:
+            for route in ('/api/report','/api/compare'):
+                with self.subTest(route=route),self.assertRaisesRegex(ValueError,'active benchmark'):
+                    self.app.action(route,{'id':self.folder.name})
+            start.assert_not_called()
+        self.assertEqual(self.path.read_bytes(),before)
 
     def test_live_lock_and_owned_job_prevent_resume(self):
         with (self.root / '.run.lock').open('w+b') as stream:

@@ -41,6 +41,7 @@ class ProtocolTests(unittest.TestCase):
                 self.assertFalse(protocol.compatible(saved,current))
         with self.assertRaisesRegex(RuntimeError,'execution or scoring code changed'):
             self.validate(current_protocol='changed-code')
+        self.assertFalse(protocol.compatible(self.legacy,self.current,[{'system_override':'Previously unsupported field'}]))
 
     def test_precise_drift_reasons_do_not_expose_environment_values(self):
         changes=[('cases',[{'id':'q1','answer':41}],'questions'),

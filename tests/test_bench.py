@@ -217,6 +217,28 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue((folder / 'leaderboard.csv').exists())
         self.assertEqual(FakeAPI.calls[1]['reasoning_effort'], 'xhigh')
 
+    def test_question_lab_selection_runs_only_selected_cases_and_reports_effective_prompts(self):
+        from stratabench import cli,question_lab
+        library=question_lab.Library(self.root)
+        cases=[datasets.case('selected','arithmetic','easy','correct',42),datasets.case('not-selected','arithmetic','hard','incorrect',42)]
+        with mock.patch.object(datasets,'select',return_value=cases):catalog=library.browse({'profile':'quick','seed':17})
+        saved=library.save({'catalog':catalog['catalog'],'questions':[{'id':'selected','system_override':'Return the answer precisely.'}]})
+        args=cli.parser().parse_args(['run','--endpoint',self.endpoint,'--profile','quick','--seed','17','--reasoning','off',
+            '--max-tokens','100','--question-selection',str(question_lab.selection_path(self.root,saved['id']))])
+        with mock.patch.object(cli,'settings',return_value={}),mock.patch.object(cli,'local_lock',return_value=contextlib.nullcontext()),\
+             mock.patch.object(cli,'cases_for',side_effect=AssertionError('Selection must use its saved cases')),\
+             mock.patch.object(runner,'ROOT',self.root),mock.patch.object(runner,'hardware',return_value={}),contextlib.redirect_stdout(io.StringIO()):
+            folder=cli.execute(args)
+        manifest=read_json(folder/'manifest.json');summary=read_json(folder/'summary.json')
+        self.assertEqual(manifest['case_count'],1)
+        self.assertEqual(manifest['options']['question_selection']['case_ids'],['selected'])
+        self.assertEqual(FakeAPI.calls[-1]['messages'][0]['content'],'Return the answer precisely.')
+        self.assertEqual(len(FakeAPI.calls),2)
+        self.assertEqual(summary['system_prompts'][0]['messages'][0]['content'],'Return the answer precisely.')
+        self.assertEqual(summary['ranking'][0]['correct'],1)
+        self.assertIn('Question lab experiment',(folder/'report.html').read_text(encoding='utf-8'))
+        self.assertTrue((folder/'system-prompts.json').is_file())
+
     def test_thinking_caps_are_recorded_and_preserved_on_resume(self):
         from stratabench import budgets
         self.options.update(max_tokens=None,thinking_budgets=budgets.normalize({'easy':1500}),thinking_budgets_default=False)

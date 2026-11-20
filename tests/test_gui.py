@@ -64,6 +64,18 @@ class GuiTests(unittest.TestCase):
         with self.request('/api/ping') as f:
             self.assertEqual(json.load(f), {'app': 'StrataBench'})
 
+    def test_question_catalog_and_selection_api_keep_questions_and_graders_intact(self):
+        case={'id':'word/1','prompt':'Sort b a','answer':'a b','grader':'exact','group':'bbh_word_sorting','difficulty':'hard'}
+        with mock.patch.object(gui.datasets,'select',return_value=[case]):
+            with self.request('/api/questions',{'profile':'quick','seed':17}) as response:catalog=json.load(response)
+        with self.request('/api/questions',{'catalog':catalog['catalog'],'case_id':'word/1'}) as response:detail=json.load(response)
+        self.assertEqual(detail['system_prompt'],gui.prompts.SYSTEM)
+        with self.request('/api/question-selection',{'catalog':catalog['catalog'],'questions':[{'id':'word/1','answer':'forged','system_override':'Sort without JSON.'}]}) as response:saved=json.load(response)
+        data=gui.question_lab.load_selection(gui.question_lab.selection_path(self.root,saved['id']),'quick',17)
+        self.assertEqual(data['cases'][0]['answer'],'a b')
+        self.assertEqual(data['cases'][0]['grader'],'exact')
+        with self.assertRaises(urllib.error.HTTPError):self.request('/api/questions',{'catalog':catalog['catalog']},auth=False)
+
     def test_fresh_browser_gets_full_page_and_its_own_session(self):
         jar = __import__('http.cookiejar', fromlist=['CookieJar']).CookieJar()
         browser = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(jar))

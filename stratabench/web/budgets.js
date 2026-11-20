@@ -10,7 +10,7 @@ function displayedThinkingDefaults(){
   return base;
 }
 function currentThinkingDraft(){return thinkingDraft||{useDefaults:form.use_default_thinking_budgets,values:{...form.thinking_budgets}};}
-function thinkingPayload(){const draft=currentThinkingDraft();return {profile:form.profile,reasoning:form.reasoning,max_tokens:form.max_tokens,difficulties:[...form.difficulties],context_words:form.context_words,tasks_id:customTasks?.id,configs:[...selectedConfigs],use_default_thinking_budgets:draft.useDefaults,thinking_budgets:draft.useDefaults?displayedThinkingDefaults():draft.values};}
+function thinkingPayload(){const draft=currentThinkingDraft();return {selection_id:form.selection_id,seed:form.seed,profile:form.profile,reasoning:form.reasoning,max_tokens:form.max_tokens,difficulties:[...form.difficulties],context_words:form.context_words,tasks_id:customTasks?.id,configs:[...selectedConfigs],use_default_thinking_budgets:draft.useDefaults,thinking_budgets:draft.useDefaults?displayedThinkingDefaults():draft.values};}
 function thinkingSignature(){return JSON.stringify([thinkingPayload(),state?.configs.map(c=>[c.id,c.budget_context_limit??c.context])]);}
 function thinkingChanged(){const draft=currentThinkingDraft();if(draft.useDefaults!==form.use_default_thinking_budgets)return true;if(draft.useDefaults)return false;return Object.keys(thinkingLabels).some(l=>Number(draft.values[l])!==Number(form.thinking_budgets[l]));}
 function thinkingReady(){return !thinkingChanged()&&thinkingCheckKey===thinkingSignature()&&thinkingCheck&&!thinkingCheck.error&&!thinkingCheck.invalid.length;}

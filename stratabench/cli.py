@@ -154,11 +154,22 @@ def execute(args):
     if not 0<=args.standard_limit<=100000 or not 30<=args.swe_test_timeout<=3600:raise ValueError('Invalid standard sample size or SWE-bench test timeout.')
     options.update(thinking_budgets_default=args.thinking_budgets is None,thinking_budgets=budgets.defaults(options['profile'],args.max_tokens) if args.thinking_budgets is None else budgets.normalize(json.loads(args.thinking_budgets),options['profile'],args.max_tokens))
     if args.tasks and args.profile in datasets.STANDARD_SPECS:raise ValueError('Imported questions cannot be labelled as a standard benchmark split.')
-    cases = cases_for(args.profile, args.seed, args.only, args.context_words, args.tasks, args.standard_limit)
+    if getattr(args,'question_selection',None):
+        from .question_lab import load_selection
+        if args.tasks:raise ValueError('Choose either an imported task file or a Question lab selection.')
+        selection=load_selection(args.question_selection,args.profile,args.seed)
+        cases=selection['cases']
+        options['question_selection']={'source_profile':args.profile,'case_ids':[c['id'] for c in cases],
+            'sha256':selection['sha256'],'edited_system_prompts':sum('system_override' in c for c in cases)}
+    else:
+        cases = cases_for(args.profile, args.seed, args.only, args.context_words, args.tasks, args.standard_limit)
     budgets.validate(options,{c['difficulty'] for c in cases})
     if args.profile in datasets.STANDARD_SPECS:
         from .standard_suites import provenance
         options['standard_benchmark']=provenance(args.profile,cases,args.standard_limit)
+        if options.get('question_selection'):
+            options['standard_benchmark']['selection']='custom question selection'
+            options['standard_benchmark']['notice']+=' Question lab experiment; questions and/or system prompts were selected by the user. This is not a published benchmark score.'
         options['standard_limit']=args.standard_limit
         if args.profile=='swebench':
             if args.dry_run:
@@ -377,6 +388,7 @@ def parser():
     q.add_argument('--only', help='Comma-separated task groups and/or difficulty levels')
     q.add_argument('--context-words', type=int, nargs='+', help='Context profile sizes in words, not tokens')
     q.add_argument('--tasks', help='Custom task JSONL file')
+    q.add_argument('--question-selection',help='Saved Question lab selection with optional per-question system prompts')
     q.add_argument('--dry-run', action='store_true')
     q.add_argument('--resume', help='Resume this result folder with identical settings')
     q.add_argument('--endpoint', help='Attach to an already running OpenAI-compatible server, ending in /v1')
