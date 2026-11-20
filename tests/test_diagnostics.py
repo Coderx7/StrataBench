@@ -44,12 +44,19 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertNotIn('logs',diagnostics.saved_jobs(self.root)[0])
 
     def test_log_preview_is_bounded_and_full_file_remains_available(self):
-        path=self.session/'engine.log';path.write_text('first line\n'+'x'*diagnostics.PREVIEW_BYTES+'\nlast line\n',encoding='utf-8')
-        details=diagnostics.collect(self.root,{'run':'run-test'})
-        log=next(s for s in details['logs'] if s['_path']==path)
-        result=diagnostics.preview(diagnostics.log_source(self.root,{'run':'run-test','log':log['id']}))
-        self.assertTrue(result['truncated']);self.assertTrue(result['text'].endswith('last line\n'))
-        self.assertNotIn('first line',result['text']);self.assertTrue(path.read_text().startswith('first line'))
+        path=self.session/'engine.log'
+        for newline in ('\n','\r\n'):
+            with self.subTest(newline=repr(newline)):
+                original=('first line'+newline+'x'*diagnostics.PREVIEW_BYTES+newline+'last line'+newline).encode('utf-8')
+                path.write_bytes(original)
+                details=diagnostics.collect(self.root,{'run':'run-test'})
+                log=next(s for s in details['logs'] if s['_path']==path)
+                result=diagnostics.preview(diagnostics.log_source(self.root,{'run':'run-test','log':log['id']}))
+                self.assertTrue(result['truncated'])
+                self.assertTrue(result['text'].endswith('last line'+newline))
+                self.assertLessEqual(len(result['text'].encode('utf-8')),diagnostics.PREVIEW_BYTES)
+                self.assertNotIn('first line',result['text'])
+                self.assertEqual(path.read_bytes(),original)
 
     def test_traversal_and_unknown_log_ids_cannot_read_other_files(self):
         for data in ({'run':'../elsewhere'},{'run':'run-test','job':'a'*32},{'job':'../../settings.json'}):
