@@ -334,7 +334,9 @@ New operations save their full activity output and a small status record under t
 
 On Linux, stopping requests a graceful interrupt. On Windows, the app stops its owned worker process tree; a request still in flight may have no saved row and is retried later. Saved answer rows are flushed individually. A process-ending crash can leave a manifest marked running; without a held run lock it is shown as unfinished again.
 
-Resume validates source/config/model fingerprints, inherited engine environment and benchmark code. **Finish or stop a run before updating StrataBench, and keep the original app revision to resume old runs if a code update changes the protocol.** It refuses to mix changed scoring code, changed model inputs or changed settings into the same run.
+Resume validates source/config/model fingerprints, inherited engine environment and benchmark execution code. Interface, log-viewer, report and timing-estimate updates no longer invalidate a run. Older runs created with the previous broader fingerprint can resume across specifically reviewed compatible updates; the app records each resume’s execution hash in `manifest.json` without replacing the original fingerprint or saved answers. Compatibility is tied to exact code hashes, not a general “ignore changes” switch. An unknown execution/scoring change still requires the original app revision or a new run. Refusal messages identify whether questions, models/configs, settings, environment or execution code changed.
+
+On Linux, the port check allows the next model session to reuse a port whose previous connections are still closing. A server that is actually listening on the port still blocks startup; StrataBench does not stop unrelated servers to free a port.
 
 Reports and raw files are under `results/<run-id>/`:
 

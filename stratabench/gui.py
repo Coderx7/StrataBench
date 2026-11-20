@@ -496,7 +496,7 @@ class App:
                 job['exit_code'] = proc.returncode
                 job['elapsed'] = time.time() - job['started_at']
                 job['stage'] = {'stopped': 'Stopped · answers saved', 'complete': 'Complete', 'failed': 'Needs attention'}[job['state']]
-                if job['state']=='failed' and not job.get('failure_reason'):
+                if job['state']=='failed' and (proc.returncode != 0 or not job.get('failure_reason')):
                     job['failure_reason']=diagnostics.reason_from_log(job['logs'],proc.returncode)
                 with contextlib.suppress(OSError,ValueError):diagnostics.save_job(ROOT,job,secret_values)
                 self.proc = None

@@ -318,6 +318,17 @@ if(!calls.includes('/api/state'))throw Error('Application startup never reached 
         saved=gui.diagnostics.saved_jobs(self.root)[0]
         self.assertEqual(saved['log_error'],'Disk full')
 
+    def test_failed_resume_shows_current_refusal_instead_of_previous_run_error(self):
+        common.write_json(self.root/'results'/'saved-run'/'manifest.json',{
+            'status':'incomplete','target_status':{'t1':{'error':'Benchmark port 18765 is busy.'}}})
+        proc=mock.Mock(stdout=io.StringIO('Error: Resume refused: run settings changed (reasoning).\n'),returncode=1)
+        job={'id':'c'*32,'kind':'resume','state':'running','started_at':time.time(),
+             'result_id':'saved-run','logs':[]}
+        self.app.proc=proc
+        self.app.watch(proc,job)
+        self.assertIn('run settings changed (reasoning)',job['failure_reason'])
+        self.assertNotIn('port 18765',job['failure_reason'])
+
     def test_failed_worker_persists_full_redacted_log_and_clickable_details(self):
         secret='fixture-secret-credential'
         (self.root/'bench').write_text('import sys\nprint("first saved line")\n'

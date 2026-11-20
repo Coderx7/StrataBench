@@ -16,7 +16,7 @@ from .common import ROOT, digest, file_hash, hardware, read_json, request_json, 
 from .platforms import process_options, stop_tree
 from .grading import grade
 from .versions import effective_config, fingerprint, vision_executable
-from . import budgets
+from . import budgets, protocol
 
 SYSTEM = ('Solve the task accurately. You may reason before answering. End with a JSON object '
           'with exactly one key, "answer", containing your final answer. For a multiple-choice '
@@ -48,6 +48,10 @@ def payload(case, options, repeat=0):
 
 def is_port_free(port):
     with socket.socket() as s:
+        # Match the managed server on POSIX: a previous session's TIME_WAIT
+        # connections must not block the next model. Windows keeps its exclusive
+        # bind behavior so a live listener cannot be mistaken for a free port.
+        if os.name != 'nt':s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(('127.0.0.1', port))
             return True
@@ -176,7 +180,7 @@ def stored_request(case, request):
 
 
 def protocol_hash():
-    return digest({p.name: file_hash(p) for p in (ROOT / 'stratabench').glob('*.py') if p.name != 'gui.py'})
+    return protocol.code_hash(ROOT)
 
 
 def make_targets(versions, configs):
@@ -221,22 +225,25 @@ def make_targets(versions, configs):
 def run(cases, targets, options, resume=None):
     env = {k: v for k, v in os.environ.items() if (k.startswith(('STRATA_', 'CUDA_', 'OMP_', 'MKL_'))
             or k in ('LD_LIBRARY_PATH',)) and not any(x in k for x in ('KEY', 'TOKEN', 'SECRET'))}
-    signature = digest({'cases': cases, 'targets': targets, 'options': options,
-                        'protocol': protocol_hash(), 'engine_environment': env})
+    current_protocol = protocol_hash()
+    signature = protocol.signature(cases, targets, options, current_protocol, env)
     if resume:
         folder = Path(resume).resolve()
         manifest = read_json(folder / 'manifest.json')
-        if manifest['signature'] != signature:
-            raise RuntimeError('Resume refused: tasks, code, versions, configs, environment or run settings changed. '
-                               'Use the exact original command/settings, or start a new run.')
+        protocol.validate_resume(manifest, cases, targets, options, env, current_protocol)
         manifest['resumed_at'] = stamp()
+        manifest.setdefault('resume_history', []).append({'at': manifest['resumed_at'],
+            'protocol_sha256': current_protocol,
+            'compatible_update': current_protocol != manifest['protocol_sha256']})
+        if current_protocol != manifest['protocol_sha256']:
+            print('Resume: verified compatible app update; keeping the original plan and saved answers.', flush=True)
     else:
         from datetime import datetime
         folder = ROOT / 'results' / (datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + options['profile'] + '-' + signature[:6])
         folder.mkdir(parents=True, exist_ok=False)
         manifest = {'schema': 1, 'signature': signature, 'created': stamp(), 'options': options,
                     'targets': targets, 'cases_sha256': digest(cases), 'case_count': len(cases),
-                    'protocol_sha256': protocol_hash(), 'hardware': hardware(), 'environment': env,
+                    'protocol_sha256': current_protocol, 'hardware': hardware(), 'environment': env,
                     'status': 'running', 'target_status': {}}
         write_json(folder / 'cases.json', cases)
     write_json(folder / 'manifest.json', manifest)

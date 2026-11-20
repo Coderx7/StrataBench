@@ -261,6 +261,30 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(s['errors'], 0)
         self.assertEqual(len(runner.load_rows(folder / 'fake/answers.jsonl')), 3)
 
+    def test_reviewed_app_update_resumes_legacy_run_and_keeps_scored_answers(self):
+        from stratabench import protocol
+        from stratabench.common import ROOT
+        FakeAPI.fail_enabled=True
+        folder,cases,target=self.run_fake(['correct','flaky','incorrect'])
+        saved=(folder/'fake/answers.jsonl').read_bytes()
+        manifest=read_json(folder/'manifest.json')
+        manifest['protocol_sha256']=read_json(protocol.COMPATIBILITY_FILE)['compatible_protocols'][0]['previous'][1]
+        signature=manifest['signature']=protocol.signature(cases,[target],self.options,manifest['protocol_sha256'],manifest['environment'])
+        write_json(folder/'manifest.json',manifest)
+        FakeAPI.fail_enabled=False
+        current=protocol.code_hash(ROOT)
+        with mock.patch.object(runner,'ROOT',self.root),mock.patch.object(runner,'protocol_hash',return_value=current),contextlib.redirect_stdout(io.StringIO()):
+            runner.run(cases,[target],self.options,folder)
+        after=read_json(folder/'manifest.json')
+        self.assertEqual(after['status'],'complete')
+        self.assertEqual(after['signature'],signature)
+        self.assertEqual(after['protocol_sha256'],manifest['protocol_sha256'])
+        self.assertEqual(after['resume_history'][-1]['protocol_sha256'],current)
+        self.assertTrue(after['resume_history'][-1]['compatible_update'])
+        self.assertTrue((folder/'fake/answers.jsonl').read_bytes().startswith(saved))
+        self.assertEqual(len(runner.load_rows(folder/'fake/answers.jsonl')),4)
+        self.assertEqual(len(FakeAPI.calls),6)
+
     def test_interrupted_matrix_resumes_pending_repeats_without_rerunning_scored_answers(self):
         cases = [datasets.case(str(i), 'g', 'easy', prompt, 42)
                  for i, prompt in enumerate(['correct', 'incorrect', 'cutoff'])]
