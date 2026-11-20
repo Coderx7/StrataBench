@@ -66,7 +66,7 @@ def run_agent(case,body,endpoint,options,api_key=None,complete=None):
         from .runner import completion
         complete=completion
     started=time.monotonic();body=copy.deepcopy(body);body['tools']=tools_for(case);body['tool_choice']='auto'
-    if options.get('max_tokens') is None:body['max_tokens']=min(body['max_tokens'],4096)
+    if options.get('max_tokens') is None and options.get('thinking_budgets') is None:body['max_tokens']=min(body['max_tokens'],4096)
     initial_request=copy.deepcopy(body)
     files=copy.deepcopy(case.get('coding',{}).get('files',{}));trace=[];usage={};last={};tool_errors=0
     for turn in range(options.get('agent_turns',8)):

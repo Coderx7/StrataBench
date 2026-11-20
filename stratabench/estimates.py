@@ -5,6 +5,7 @@ from pathlib import Path
 import statistics
 
 from .common import ROOT, digest, file_hash, read_json
+from . import budgets
 from .runner import BUDGETS
 
 # Deliberately broad output-token assumptions: these are not model-quality measurements.
@@ -102,7 +103,7 @@ class TimingHistory:
                             continue
                         level = row.get('difficulty')
                         if level in LEVELS:
-                            sample = {'seconds': seconds, 'budget': row.get('request',{}).get('max_tokens')}
+                            sample = {'seconds': seconds, 'budget': row.get('request',{}).get('max_tokens'),'thinking':row.get('request',{}).get('reasoning_budget_tokens')}
                             samples[(key,level)][row['case_id']] = sample
             except (OSError,ValueError,KeyError,TypeError):
                 continue
@@ -126,10 +127,13 @@ class TimingHistory:
                 continue
             agent=options.get('profile') in ('tools','coding','swebench')
             turns=int(options.get('agent_turns',8)) if agent else 1
-            budget = max_tokens or (min(BUDGETS[level],4096) if agent else BUDGETS[level])
+            budget = budgets.output_limit(options,level)
+            thinking = budgets.thinking_limit(options,level)
             token_low,token_high = TOKEN_RANGES.get(reasoning,TOKEN_RANGES['xhigh'])[min(index,2) if level=='unrated' else index]
-            lo = min(token_low,budget)/fast + 1
-            hi = min(token_high,budget)/slow + 6
+            if thinking and options.get('thinking_budgets') is not None and not options.get('thinking_budgets_default',False):token_high=max(token_high,thinking)
+            generation_cap=min(budget,thinking+budgets.ANSWER_RESERVE) if thinking else budget
+            lo = min(token_low,generation_cap)/fast + 1
+            hi = min(token_high,generation_cap)/slow + 6
             if agent:lo*=min(3,turns);hi*=turns
             judged=options.get('profile')=='writingbench' or options.get('profile')=='writing' and options.get('style_judge_enabled',bool(options.get('style_judge_endpoint')))
             if judged:lo+=3;hi+=300
@@ -143,7 +147,7 @@ class TimingHistory:
                     hi += statistics.mean(relevant)*2.2/80
             else:
                 matches = self.samples.get(((path,sha,version,reasoning,timing_scope(options)),level),{})
-                valid = [s['seconds'] for s in matches.values() if s.get('budget')==budget]
+                valid = [s['seconds'] for s in matches.values() if s.get('budget')==budget and s.get('thinking')==thinking]
                 if valid:
                     median = statistics.median(valid)
                     known_questions += len(valid)

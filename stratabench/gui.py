@@ -22,7 +22,7 @@ import uuid
 import webbrowser
 
 from .common import ROOT, capture, hardware, local_lock, read_json, save_settings, settings, write_json
-from . import datasets, versions
+from . import budgets, datasets, versions
 from .version_order import apply_order, ordered_names
 from .reference_scores import catalog as reference_catalog, reference_rows
 from .estimates import TimingHistory
@@ -121,7 +121,7 @@ def config_catalog():
         def flag(name):
             i = args.index(name)+1 if name in args else len(args)
             return args[i] if i < len(args) else None
-        item.update(context=flag('--max-context'), kv=flag('--kv'), spec=flag('--spec'),
+        item.update(context=budgets.context_limit({'args':args}), budget_context_limit=budgets.context_limit({'args':args}), kv=flag('--kv'), spec=flag('--spec'),
                     imported=Path(item['path']).parent == imported)
         item['id'] = item['path']
         item['vision'] = bool(read_json(item['path']).get('vision'))
@@ -190,6 +190,9 @@ def run_command(data, validate_judge=True):
         if parsed.scheme not in ('http','https') or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment or not model or len(model)>200:
             raise ValueError('The writing judge needs an HTTP(S) endpoint without embedded credentials and a model name.')
         cmd += ['--style-judge-endpoint',endpoint,'--style-judge-model',model]
+    budget_options=budgets.options_from_form(data)
+    if not budget_options['thinking_budgets_default']:
+        cmd += ['--thinking-budgets',json.dumps(budget_options['thinking_budgets'])]
     return cmd
 
 
@@ -382,6 +385,7 @@ class App:
         return {'versions': [{'name': name, 'kind': s['versions'][name]['kind'], 'created': s['versions'][name].get('created'),
                               'commit': s['versions'][name].get('git', '')[:12]} for name in ordered_names(s)],
                 'configs': configs, 'profiles': self.profiles, 'profile_counts': self.profile_counts,
+                'thinking_budget_defaults': {p:budgets.defaults(p) for p in (*datasets.PROFILES,'custom')},
                 'benchmark_library': standard_suites.catalog(s),
                 'benchmark_settings': standard_suites.library_settings(s),
                 'hardware': self.hardware, 'runs': runs, 'job': job,
@@ -525,6 +529,8 @@ class App:
                 apply_order(state, data.get('mode','newest'), data.get('order'))
                 save_settings(state)
             return {'ok': True, 'order': ordered_names(state)}
+        if route == '/api/budget-compatibility':
+            return self.budget_compatibility(data)
         if route == '/api/estimate':
             return self.estimate(data)
         if route=='/api/optional-swebench':
@@ -549,6 +555,8 @@ class App:
             return self.start(action,[action,suite],('Checking ' if action=='check-suite' else 'Preparing ')+standard_suites.SPECS[suite]['name'],suite=suite)
         if route == '/api/run':
             command=run_command(data)
+            check=self.budget_compatibility(data)
+            if check['invalid']:raise ValueError('Apply the thinking budgets and deselect incompatible configurations before starting.')
             if data.get('profile') in standard_suites.SPECS:standard_suites.verify(data['profile'])
             overrides={}
             if data.get('profile') in ('writing','writingbench') and (data.get('style_judge_enabled') or data.get('profile')=='writingbench') and data.get('style_judge_key'):
@@ -630,6 +638,29 @@ class App:
             return {'ok': True}
         raise ValueError('This action is not available.')
 
+    def budget_compatibility(self,data):
+        profile=data.get('profile','quick')
+        if profile not in (*datasets.PROFILES,'custom'):raise ValueError('Choose a benchmark preset.')
+        if data.get('reasoning','xhigh') not in ('off','low','medium','high','xhigh','default'):raise ValueError('Choose a reasoning setting.')
+        options=budgets.options_from_form(data)
+        selected=data.get('configs',[])
+        known={c['id']:c for c in config_catalog()}
+        if not isinstance(selected,list) or any(not isinstance(c,str) or c not in known for c in selected):raise ValueError('Choose known model configurations.')
+        levels=data.get('difficulties',datasets.DIFFICULTIES)
+        if not isinstance(levels,list) or any(l not in datasets.DIFFICULTIES for l in levels):raise ValueError('Choose difficulty levels.')
+        if profile in standard_suites.SPECS:levels=['unrated']
+        elif profile=='custom':
+            name=data.get('tasks_id','')
+            if not re.fullmatch(r'[a-f0-9]{32}\.jsonl',str(name)) or not (ROOT/'user-tasks'/name).is_file():raise ValueError('Choose a custom question file first.')
+            levels=list({json.loads(line)['difficulty'] for line in (ROOT/'user-tasks'/name).read_text(encoding='utf-8').splitlines() if line.strip()})
+        elif profile=='context':
+            words=str(data.get('context_words','2000 8000 16000 32000')).replace(',',' ').split()
+            if not words or len(words)>12:raise ValueError('Choose 1–12 context sizes.')
+            counts={'medium' if number({'words':w},'words',2000,100,500000)<=8000 else 'very_hard' for w in words}
+            levels=[l for l in levels if l in counts]
+        elif self.profile_counts.get(profile):levels=[l for l in levels if self.profile_counts[profile].get(l,0)]
+        return budgets.compatibility([known[c] for c in dict.fromkeys(selected)],options,levels)
+
     def estimate(self, data):
         # Reuse run validation, but this endpoint never starts an engine or downloads data.
         run_command({**data,'style_judge_enabled':False},validate_judge=False)
@@ -647,7 +678,7 @@ class App:
         names = [name for name in ordered_names(settings()) if name in selected]
         configs = {c['id']:c for c in config_catalog()}
         difficulties = set(data.get('difficulties',datasets.DIFFICULTIES))
-        options = dict(data)
+        options = {**data,**budgets.options_from_form(data)}
         if profile == 'context':
             words = [int(x) for x in str(data.get('context_words','2000 8000 16000 32000')).replace(',',' ').split()]
             counts = Counter()
@@ -667,6 +698,7 @@ class App:
             counts={'unrated':min(sum(counts.values()),int(data.get('standard_limit') or 50))}
         if not sum(counts.values()):
             raise ValueError('No questions in this suite match the selected difficulty levels.')
+        budgets.validate(options,counts)
         with self.lock:
             self.timing_history.refresh()
             rows = [self.timing_history.estimate(configs[config],name,counts,options)
@@ -769,7 +801,7 @@ def handler(app):
                         raise ValueError('This report file is not available.')
                     file = result_path(parts[2]) / parts[3]
                     self.send(200, file.read_bytes(), mimetypes.guess_type(file.name)[0] or 'application/octet-stream')
-                elif path in ('/', '/app.js', '/helpers.js', '/outcomes.js', '/setup.js', '/style.css', '/icon.svg'):
+                elif path in ('/', '/app.js', '/helpers.js', '/budgets.js', '/outcomes.js', '/setup.js', '/style.css', '/icon.svg'):
                     file = ASSETS / ('index.html' if path == '/' else path[1:])
                     self.send(200, file.read_bytes(), mimetypes.guess_type(file.name)[0] or 'text/plain')
                 else:

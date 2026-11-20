@@ -214,6 +214,25 @@ Docker must be running in **Linux-container mode** on Linux or Windows; Windows 
 
 If image preparation fails or storage is insufficient, the run stops with saved diagnostics. Resume requires the original image IDs to remain available. There is no host-execution fallback. Only the app’s own labelled task containers are cleaned up.
 
+**Thinking budgets:** In **New benchmark → Reasoning & repetition**, **Use default thinking budgets** is checked initially. Every field shows the app’s default. Uncheck it to edit the values, then click **Apply budgets**. Reasoning effort (xhigh by default) and thinking-token caps are separate controls.
+
+| Difficulty | Default thinking tokens | Automatic total generation tokens |
+| --- | ---: | ---: |
+| Easy | 1,024 | 2,048 |
+| Medium | 3,072 | 4,096 |
+| Hard | 7,168 | 8,192 |
+| Very hard | 11,264 | 12,288 |
+| Extreme | 15,360 | 16,384 |
+| Original benchmark category (standard suites) | 7,168 | 8,192 |
+
+These are StrataBench defaults, not a claim about the model publisher’s evaluation settings. Tool use, agentic coding and SWE-bench default to at most 3,072 thinking tokens and 4,096 total tokens **per model turn** (Easy remains 1,024/2,048). Standard suites retain their original categories; their **Original benchmark category** field controls all questions rather than inventing difficulty ratings.
+
+Custom caps accept positive whole numbers up to 1,000,000. Automatic total generation allows the chosen thinking cap plus 1,024 tokens for answer/wrap-up, including for agent tasks. An explicit **Answer token limit** overrides that automatic total; custom thinking must remain below it. Default thinking caps adapt to a smaller overall limit to leave answer space. **Reasoning Off** disables thinking, ignores the configured thinking caps, and keeps the ordinary total output limits. Requests use Strata’s `reasoning_budget_tokens`; the overall `max_tokens` limit still includes thinking and the final answer.
+
+The app checks the **selected configs** against the budgets for the actual difficulty levels in the selected suite. It reads the config’s `--max-context` declaration; config-level `max_tokens` and `reasoning_budget_tokens` are defaults, not hard capacity limits. Checks allow another 1,024 prompt tokens. A warning lists each incompatible config and the required/available capacity. Editing does not change selections. **Apply budgets & deselect … incompatible configs** accepts the new budgets and removes just those selections; compatible configs remain selected. If none remain, select a compatible config before starting. Unknown context sizes are reported and stay selected. Long prompts, images and multi-turn histories can need more space than this planning allowance, so Strata also checks the actual request at runtime. The server and command-line runner repeat the capacity check before starting a benchmark.
+
+Applied budgets are saved with the run, used in time estimates and preserved by Resume. Timing history must match both the thinking cap and total output limit. **Time by configuration** stays expanded across automatic refreshes and plan changes until you close it.
+
 Default counts depend on the pinned dataset selection and difficulty filters. Long-context sizes are **words**, not tokens, and must fit the selected model configuration. The app shows a time range per configuration and for the whole matrix. Unmeasured estimates use an RTX 3080 / 64 GB planning baseline; other hardware can differ substantially. Observed timings for the same version/config/reasoning/budget improve estimates. Reasoning can make hard questions take much longer than easy ones.
 
 Included public tasks are GSM8K, OpenBookQA, eight BIG-Bench Hard tasks, the numeric/text-only subset of MATH-500, and AIME 2024. Generated tasks cover arithmetic, JSON transformations, Python tracing, graphs, combinatorics, exact scheduling, Persian arithmetic and long-context retrieval. Difficulty labels are heuristic.
@@ -246,7 +265,7 @@ Enable **Add an independent writing-quality judge** to add ratings for clarity, 
 
 Coding requires **Docker running in Linux-container mode**, including on Windows through Docker Desktop. Select **Prepare coding runtime** in the Coding suite to download the Python image once. The default is `python:3.12-slim`; its resolved immutable image ID is recorded for a run and reused on resume. Test containers use no host-folder mounts or network, a read-only root, one CPU, 256 MB memory, a process limit and time/output limits. See Docker’s [run options](https://docs.docker.com/engine/containers/run/) and [resource limits](https://docs.docker.com/engine/containers/resource_constraints/). The app never falls back to executing generated code on the host.
 
-Tool/coding suites have a configurable maximum model-turn count (default 8). Their automatic output budget is at most 4,096 tokens per turn; a custom maximum-token setting overrides it. Multi-turn tasks and optional judging increase runtime. Their timing history is kept separate from the ordinary accuracy suite. Agent rows include tool/test time; optional judge time is recorded separately from model-generation latency.
+Tool/coding suites have a configurable maximum model-turn count (default 8). Their automatic output budget is at most 4,096 tokens per turn; custom thinking budgets or a custom overall answer limit override it. Multi-turn tasks and optional judging increase runtime. Their timing history is kept separate from the ordinary accuracy suite. Agent rows include tool/test time; optional judge time is recorded separately from model-generation latency.
 
 ### Original-model references
 
@@ -330,7 +349,7 @@ python -m stratabench compare "/path/to/results/RUN_A" "/path/to/results/RUN_B"
 
 For Windows paths, use values such as `"C:\Models\Strata"`, `"C:\Python312\python.exe"` and `"C:\Models\venv\Scripts\python.exe"`. The commands themselves are the same; no Bash environment is required.
 
-Advanced runs accept `--max-tokens`, `--timeout`, `--startup-timeout`, `--temperature`, `--seed`, `--only`, `--context-words`, `--tasks`, `--port` and `--dry-run`. Capability suites also support `--agent-turns`, `--coding-image`, `--style-judge-endpoint` and `--style-judge-model`. `python -m stratabench run --help` lists them. Source preparation also accepts `--jobs`, `--python` and repeated `--cmake-arg=-DNAME=value` options.
+Advanced runs accept `--thinking-budgets '{"easy":1024,"hard":12000,"extreme":24000}'` (omitted levels use app defaults), `--max-tokens`, `--timeout`, `--startup-timeout`, `--temperature`, `--seed`, `--only`, `--context-words`, `--tasks`, `--port` and `--dry-run`. Capability suites also support `--agent-turns`, `--coding-image`, `--style-judge-endpoint` and `--style-judge-model`. `python -m stratabench run --help` lists them. Source preparation also accepts `--jobs`, `--python` and repeated `--cmake-arg=-DNAME=value` options.
 
 Standard-suite commands are optional; the GUI provides the same controls:
 

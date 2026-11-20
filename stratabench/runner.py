@@ -16,13 +16,14 @@ from .common import ROOT, digest, file_hash, hardware, read_json, request_json, 
 from .platforms import process_options, stop_tree
 from .grading import grade
 from .versions import effective_config, fingerprint, vision_executable
+from . import budgets
 
 SYSTEM = ('Solve the task accurately. You may reason before answering. End with a JSON object '
           'with exactly one key, "answer", containing your final answer. For a multiple-choice '
           'question use only the option label; for a numeric question use a number or a numeric '
           'string; for a structured answer use the requested object or list as the answer value. '
           'Do not include an explanation inside the answer value.')
-BUDGETS = {'easy': 2048, 'medium': 4096, 'hard': 8192, 'very_hard': 12288, 'extreme': 16384, 'unrated':8192}
+BUDGETS = budgets.OUTPUT_DEFAULTS
 
 
 def payload(case, options, repeat=0):
@@ -30,7 +31,9 @@ def payload(case, options, repeat=0):
             'messages': [{'role': 'system', 'content': case.get('system',SYSTEM)}, {'role': 'user', 'content': case['prompt']}],
             'temperature': options['temperature'], 'top_p': 1.0,
             'seed': options['seed'] + repeat,
-            'max_tokens': options.get('max_tokens') or BUDGETS[case['difficulty']]}
+            'max_tokens': budgets.output_limit(options,case['difficulty'])}
+    thinking=budgets.thinking_limit(options,case['difficulty'])
+    if thinking is not None:body['reasoning_budget_tokens']=thinking
     if case.get('image'):
         body['messages'][1]['content']=[{'type':'text','text':case['prompt']},{'type':'image_url','image_url':{'url':case['image']}}]
     if case.get('images'):
@@ -270,7 +273,7 @@ def run(cases, targets, options, resume=None):
                     print('  Ready. Running one request at a time.', flush=True)
                     # Identical, unscored warm-up before every managed or attached session.
                     warmup = payload({'prompt': 'Reply with Ready.', 'difficulty': 'easy'}, options)
-                    warmup.update(max_tokens=64, reasoning_effort='none')
+                    warmup.update(max_tokens=64, reasoning_effort='none',reasoning_budget_tokens=0)
                     write_json(target_dir / 'warmup.json', completion(endpoint, warmup, options['timeout'], api_key))
                     errors = 0
                     for repeat in range(options['repeats']):

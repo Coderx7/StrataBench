@@ -20,6 +20,11 @@ class SetupBrowserTests(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     @unittest.skipUnless(shutil.which('node'), 'Node is optional for browser logic checks')
+    def test_thinking_budgets_and_persistent_time_details(self):
+        result=subprocess.run(['node',str(ROOT/'tests/js/budgets.test.cjs'),str(ROOT)],capture_output=True,text=True,encoding='utf-8',timeout=20)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is optional for browser logic checks')
     def test_standard_library_controls(self):
         result=subprocess.run(['node',str(ROOT/'tests/js/standards.test.cjs'),str(ROOT)],capture_output=True,text=True,encoding='utf-8',timeout=20)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

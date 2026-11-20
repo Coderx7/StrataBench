@@ -102,7 +102,7 @@ def run_swe(case,body,endpoint,options,api_key=None,run_id=None):
         {'role':'user','content':case['prompt']}]
     body['tools']=[tool('terminal','Run a bash command in the isolated repository container. No network or host folders are available.',{'command':{'type':'string'}},['command'])]
     body['tool_choice']='auto'
-    if options.get('max_tokens') is None:body['max_tokens']=4096
+    if options.get('max_tokens') is None and options.get('thinking_budgets') is None:body['max_tokens']=4096
     first=copy.deepcopy(body)
     try:
         for turn in range(options.get('agent_turns',30)):

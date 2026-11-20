@@ -12,7 +12,7 @@ import sys
 import webbrowser
 
 from .common import ROOT, capture, hardware, local_lock, read_json, save_settings, settings
-from . import datasets, versions
+from . import budgets, datasets, versions
 from .runner import BUDGETS, make_targets, run
 
 
@@ -130,7 +130,8 @@ def show_plan(cases, targets, options):
     print('  Reasoning:', options['reasoning'], '| temperature:', options['temperature'])
     print('  Difficulty:', ', '.join(f'{k}: {v}' for k, v in Counter(c['difficulty'] for c in cases).items()))
     print('  Groups:', ', '.join(sorted({c['group'] for c in cases})))
-    print('  Maximum answer tokens:', options.get('max_tokens') or json.dumps(BUDGETS))
+    print('  Thinking caps:', json.dumps(options.get('thinking_budgets')))
+    print('  Maximum answer tokens:', json.dumps({l:budgets.output_limit(options,l) for l in dict.fromkeys(c['difficulty'] for c in cases)}))
     print('  The answer limit includes thinking. Cutoffs count as failures and are shown separately.')
     print('  Time varies substantially with thinking and SSD reads. Start with smoke or quick.')
     for t in targets:
@@ -151,8 +152,10 @@ def execute(args):
     if args.max_tokens is not None and args.max_tokens < 1:
         raise ValueError('The answer token limit must be positive.')
     if not 0<=args.standard_limit<=100000 or not 30<=args.swe_test_timeout<=3600:raise ValueError('Invalid standard sample size or SWE-bench test timeout.')
+    options.update(thinking_budgets_default=args.thinking_budgets is None,thinking_budgets=budgets.defaults(options['profile'],args.max_tokens) if args.thinking_budgets is None else budgets.normalize(json.loads(args.thinking_budgets),options['profile'],args.max_tokens))
     if args.tasks and args.profile in datasets.STANDARD_SPECS:raise ValueError('Imported questions cannot be labelled as a standard benchmark split.')
     cases = cases_for(args.profile, args.seed, args.only, args.context_words, args.tasks, args.standard_limit)
+    budgets.validate(options,{c['difficulty'] for c in cases})
     if args.profile in datasets.STANDARD_SPECS:
         from .standard_suites import provenance
         options['standard_benchmark']=provenance(args.profile,cases,args.standard_limit)
@@ -190,6 +193,10 @@ def execute(args):
         if missing:
             raise ValueError('Prepare these versions first: ./bench add-version ' + missing[0])
         targets = make_targets([state['versions'][name] for name in names], resolve_configs(args.configs))
+    for target in targets:
+        if target.get('endpoint'):continue
+        check=budgets.compatibility([{**read_json(target['config']),'name':target['label']}],options,{c['difficulty'] for c in cases})
+        if check['invalid']:raise ValueError('Thinking/output budgets exceed the declared context window: '+target['label'])
     if any(c.get('requires_vision') for c in cases):
         for target in targets:
             if target.get('endpoint'):continue
@@ -355,6 +362,7 @@ def parser():
     q.add_argument('--temperature', type=float, default=0.0)
     q.add_argument('--repeats', type=int, default=1)
     q.add_argument('--max-tokens', type=int)
+    q.add_argument('--thinking-budgets',help='JSON difficulty-to-token map; omitted levels use displayed defaults')
     q.add_argument('--timeout', type=float, default=1800, help='Per-request timeout in seconds')
     q.add_argument('--startup-timeout', type=float, default=900)
     q.add_argument('--port', type=int, default=18765, help='Dedicated loopback benchmark port')

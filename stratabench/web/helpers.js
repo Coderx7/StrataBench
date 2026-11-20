@@ -1,5 +1,11 @@
 'use strict';
 
+let timeByConfigOpen=false;
+const planningHTMLCache=new WeakMap();
+function stablePlanningHTML(element,html){if(planningHTMLCache.get(element)!==html){element.innerHTML=html;planningHTMLCache.set(element,html);}}
+function rememberTimeDetails(){const details=$('#time-by-config');if(details)timeByConfigOpen=details.open;}
+document.addEventListener('toggle',event=>{if(event.target.id==='time-by-config'&&event.target.isConnected)timeByConfigOpen=event.target.open;},true);
+
 const BENCHMARK_LABELS={gsm8k:'GSM8K',science_qa:'OpenBookQA',math500_numeric:'MATH-500 numeric subset',aime2024:'AIME 2024',arithmetic:'Generated arithmetic',structured_data:'Structured JSON',algorithmic_reasoning:'Graph reasoning',python_tracing:'Python tracing',combinatorics:'Subset counting',exact_scheduling:'Exact scheduling',persian:'Persian arithmetic',context_retrieval:'Long-context retrieval'};
 function groupLabel(group){return BENCHMARK_LABELS[group]||group.replace(/^bbh_/,'BBH · ').replaceAll('_',' ');}
 function planningTime(seconds){if(seconds<60)return Math.max(1,Math.round(seconds))+' sec';if(seconds<3600)return Math.ceil(seconds/60)+' min';if(seconds<86400)return (Math.ceil(seconds/360)/10)+' hr';return (Math.ceil(seconds/8640)/10)+' days';}
@@ -14,7 +20,7 @@ function scheduleEstimate(){
   const payload={...form,versions,configs,tasks_id:customTasks?.id,all_suites:true};
   const key=JSON.stringify([payload,state.job?.id,state.job?.state,Math.floor(Date.now()/60000)]);
   if(key===estimateKey)return;
-  estimateKey=key;estimateData=null;clearTimeout(estimateTimer);
+  estimateKey=key;clearTimeout(estimateTimer);
   if(!versions.length||!configs.length)return;
   estimateTimer=setTimeout(async()=>{
     try{const result=await api('/api/estimate',payload);if(key!==estimateKey)return;estimateData=result;}
@@ -38,16 +44,16 @@ function paintEstimates(){
     el.textContent=planningRange(total)+(rows.length>1?' · '+rows.length+' versions':' · current suite');
     el.title=rows.map(r=>r.version+': '+r.basis).join('\n');
   });
-  const box=$('#time-estimate-summary');if(!box)return;
-  if(!selectedVersions.size||!selectedConfigs.size){box.innerHTML='<p>Select a version and config for a time estimate.</p>';return;}
-  if(estimateData?.error){box.innerHTML='<strong>Time estimate unavailable</strong><p>'+esc(estimateData.error)+'</p>';return;}
+  const box=$('#time-estimate-summary');if(!box)return;rememberTimeDetails();
+  if(!selectedVersions.size||!selectedConfigs.size){stablePlanningHTML(box,'<p>Select a version and config for a time estimate.</p>');return;}
+  if(estimateData?.error){stablePlanningHTML(box,'<strong>Time estimate unavailable</strong><p>'+esc(estimateData.error)+'</p>');return;}
   const total=selectedEstimateTotal(estimateData);
-  if(!total){box.innerHTML='<strong>Estimating duration…</strong><p>Thinking and model loading are included.</p>';return;}
+  if(!total){stablePlanningHTML(box,'<strong>Estimating duration…</strong><p>Thinking and model loading are included.</p>');return;}
   const rows=selectedEstimateRows(estimateData);
   const measured=rows.reduce((n,r)=>n+r.local_sample_questions,0);
   const configs=new Map();
   rows.forEach(r=>{if(!configs.has(r.config))configs.set(r.config,{name:r.name,lower_seconds:0,upper_seconds:0,samples:0,warnings:[]});const c=configs.get(r.config);c.lower_seconds+=r.lower_seconds;c.upper_seconds+=r.upper_seconds;c.samples+=r.local_sample_questions;c.warnings.push(...r.warnings);});
-  box.innerHTML='<span class="eta-eyebrow">ESTIMATED TOTAL TIME</span><strong class="eta-total">'+planningRange(total)+'</strong><p>'+(measured?'Includes '+measured+' locally timed question(s); unmeasured difficulties are estimated.':'Planning range. This combination has not been timed locally.')+'</p><details><summary>Time by configuration</summary>'+[...configs.values()].map(c=>'<div class="eta-config-row"><span title="'+esc(c.name)+'">'+esc(c.name.replace(/^strata-/,''))+'</span><strong>'+planningRange(c)+'</strong>'+[...new Set(c.warnings)].map(w=>'<small>'+esc(w)+'</small>').join('')+'</div>').join('')+'</details><p class="eta-caveat">Per-combination loading and warm-up included. Builds and downloads excluded. Long thinking can exceed this range.</p>';
+  stablePlanningHTML(box,'<span class="eta-eyebrow">ESTIMATED TOTAL TIME</span><strong class="eta-total">'+planningRange(total)+'</strong><p>'+(measured?'Includes '+measured+' locally timed question(s); unmeasured difficulties are estimated.':'Planning range. This combination has not been timed locally.')+'</p><details id="time-by-config" '+(timeByConfigOpen?'open':'')+'><summary>Time by configuration</summary>'+[...configs.values()].map(c=>'<div class="eta-config-row"><span title="'+esc(c.name)+'">'+esc(c.name.replace(/^strata-/,''))+'</span><strong>'+planningRange(c)+'</strong>'+[...new Set(c.warnings)].map(w=>'<small>'+esc(w)+'</small>').join('')+'</div>').join('')+'</details><p class="eta-caveat">Per-combination loading and warm-up included. Builds and downloads excluded. Long thinking can exceed this range.</p>');
 }
 
 function versionOrderControls(){return `<div class="version-order-toolbar"><label>Version order <select id="version-sort">${[['newest','Newest first'],['oldest','Oldest first'],['custom','Custom order']].map(([value,label])=>`<option value="${value}" ${state.version_sort_mode===value?'selected':''}>${label}</option>`).join('')}</select></label><p>Drag cards or use Move earlier / Move later. Your order is saved. New versions join the end of a custom order.</p></div>`;}

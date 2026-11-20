@@ -217,6 +217,21 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue((folder / 'leaderboard.csv').exists())
         self.assertEqual(FakeAPI.calls[1]['reasoning_effort'], 'xhigh')
 
+    def test_thinking_caps_are_recorded_and_preserved_on_resume(self):
+        from stratabench import budgets
+        self.options.update(max_tokens=None,thinking_budgets=budgets.normalize({'easy':1500}),thinking_budgets_default=False)
+        folder,cases,target=self.run_fake(['correct'])
+        request=FakeAPI.calls[-1]
+        self.assertEqual(request['reasoning_budget_tokens'],1500)
+        self.assertEqual(request['max_tokens'],2524)
+        manifest=read_json(folder/'manifest.json')
+        self.assertEqual(manifest['options']['thinking_budgets']['easy'],1500)
+        count=len(FakeAPI.calls)
+        with mock.patch.object(runner,'ROOT',self.root),contextlib.redirect_stdout(io.StringIO()):runner.run(cases,[target],self.options,str(folder))
+        self.assertEqual(len(FakeAPI.calls),count)
+        changed={**self.options,'thinking_budgets':{**self.options['thinking_budgets'],'easy':2000}}
+        with self.assertRaisesRegex(RuntimeError,'settings changed'):runner.run(cases,[target],changed,str(folder))
+
     def test_resume_skips_answers_and_refuses_settings_drift(self):
         folder, cases, target = self.run_fake(['correct'])
         count = len(FakeAPI.calls)
