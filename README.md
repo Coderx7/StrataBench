@@ -197,6 +197,14 @@ The app checks the **selected configs** against the budgets for the actual diffi
 
 Applied budgets are saved with the run and preserved by Resume. They also affect the time estimates. Timing history must match both the thinking cap and total output limit.
 
+### Advanced settings
+
+**New benchmark → Reasoning & repetition → Advanced settings** is collapsed by default. Click **+** to open its compact **Generation** and **Timeouts** rows. Each row shows the default beside your value, with a short explanation and seconds marked on timeout inputs. The header shows **Custom settings** when a value differs from its default, even while closed. Your open/closed choice survives automatic refreshes and changes to the benchmark plan.
+
+The defaults are an **automatic answer-token limit**, **temperature 0**, **seed 20261119**, **1,800 seconds per request**, and **900 seconds for model loading**. Leave the answer-token field blank for automatic limits. Changes apply to all selected versions and configs. **Restore defaults** resets only these five advanced fields; reasoning effort, thinking budgets, repeats and suite choices keep their current values. Advanced edits apply immediately to the plan; custom thinking-budget edits still use their own **Apply budgets** button.
+
+[Preview the advanced settings panel](docs/screenshots/advanced-settings.jpg).
+
 ### Suites and difficulty
 
 | Suite | Default questions per combination | Purpose |

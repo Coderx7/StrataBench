@@ -65,3 +65,26 @@ test('thinking controls start collapsed and preserve explicit expansion while ed
  for(const toggle of f.listeners.get('toggle'))toggle({target:{id:'thinking-settings',isConnected:false,open:false}});
  assert.equal(f.run('thinkingSettingsOpen'),true);
 });
+
+test('advanced fields restore their defaults without resetting other run settings',()=>{
+ const f=fixture();f.run('form.temperature="0.8";form.timeout="2400";form.repeats=3;form.reasoning="high";form.use_default_thinking_budgets=false;form.thinking_budgets.hard=12000;paintAdvancedSummary()');
+ assert.equal(f.elements.get('#advanced-settings-overview').textContent,'Custom settings');
+ assert.equal(f.elements.get('[data-action="reset-advanced"]').hidden,false);
+ f.run('resetAdvancedSettings();paintAdvancedSummary()');
+ assert.equal(f.run('form.temperature'),0);assert.equal(f.run('form.timeout'),1800);assert.equal(f.run('form.max_tokens'),'');
+ assert.equal(f.run('form.repeats'),3);assert.equal(f.run('form.reasoning'),'high');assert.equal(f.run('form.thinking_budgets.hard'),12000);assert.equal(f.run('form.use_default_thinking_budgets'),false);
+ assert.equal(f.elements.get('#advanced-settings-overview').textContent,'Default settings');assert.equal(f.elements.get('[data-action="reset-advanced"]').hidden,true);
+ f.run('form.temperature="0.0";form.timeout="1800"');assert.equal(f.run('customAdvancedFields().length'),0);
+});
+test('advanced disclosure keeps its chosen state and entered values across rerenders',()=>{
+ const f=fixture();assert.ok(!f.run('renderAdvancedSettings()').match(/<details id="advanced-settings"[^>]*\bopen\b/));
+ const panel={id:'advanced-settings',open:true,isConnected:true};f.elements.set('#advanced-settings',panel);
+ for(const toggle of f.listeners.get('toggle'))toggle({target:panel});
+ f.run('form.temperature="0.4";form.max_tokens="16000"');let html=f.run('renderAdvancedSettings()');
+ assert.ok(html.match(/<details id="advanced-settings"[^>]*\bopen\b/));assert.ok(html.includes('value="0.4"'));assert.ok(html.includes('value="16000"'));assert.ok(html.includes('Custom settings'));
+ panel.open=false;for(const toggle of f.listeners.get('toggle'))toggle({target:panel});
+ assert.ok(!f.run('renderAdvancedSettings()').match(/<details id="advanced-settings"[^>]*\bopen\b/));
+ panel.open=true;for(const toggle of f.listeners.get('toggle'))toggle({target:panel});
+ for(const toggle of f.listeners.get('toggle'))toggle({target:{id:'advanced-settings',isConnected:false,open:false}});
+ assert.equal(f.run('advancedSettingsOpen'),true);
+});
