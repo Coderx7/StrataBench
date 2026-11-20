@@ -12,6 +12,18 @@ Instead of carrying on with ad hoc prompt testing, I fired up my clanker and bui
 
 I built this for myself on Linux, using an RTX 3080 with 10 GB VRAM and 64 GB of system RAM. I added Windows support, including launchers and platform-specific handling, but **I have never tested it on Windows**.
 
+## Screenshots
+
+Captured from the Linux app. Versions, configurations and results shown here are examples from my local installation. Click an image to view it full size.
+
+| Set up a comparison | Manage the benchmark library |
+| --- | --- |
+| [![Select Strata versions and model configurations in New benchmark](docs/screenshots/new-benchmark.jpg)](docs/screenshots/new-benchmark.jpg) | [![Manage standard benchmark downloads and evaluator setup in the benchmark library](docs/screenshots/benchmark-library.jpg)](docs/screenshots/benchmark-library.jpg) |
+
+| Configure thinking budgets | Inspect the answers behind each score |
+| --- | --- |
+| [![Reasoning effort and default thinking-token budgets for each difficulty](docs/screenshots/thinking-budgets.jpg)](docs/screenshots/thinking-budgets.jpg) | [![Test explorer with correct, incorrect, cutoff, request-error and pending counts](docs/screenshots/test-explorer.jpg)](docs/screenshots/test-explorer.jpg) |
+
 ## Quick start
 
 1. Download this repository as a ZIP and extract it, or clone it with Git.
